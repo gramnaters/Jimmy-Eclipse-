@@ -135,9 +135,10 @@ function tidalMapTrack(t) {
     title: t.title || 'Unknown',
     artist: artistName,
     album: (t.album && t.album.title) || 'Unknown Album',
-    albumCover: tidalCoverUrl(t.album && t.album.cover),
+    artworkURL: tidalCoverUrl(t.album && t.album.cover),
     duration: t.duration || 0,
     isrc: t.isrc || null,
+    format: fmt === 'mqa' ? 'flac' : fmt,
     audioQuality: qualityLabel(bit, sr, fmt, modes),
     _bit: bit, _sr: sr, _fmt: fmt, _modes: modes,
     _provider: 'Tidal'
@@ -153,7 +154,7 @@ function tidalMapAlbum(a) {
     id: 'tidal:' + a.id,
     title: a.title || 'Unknown',
     artist: (a.artist && a.artist.name) || 'Unknown Artist',
-    albumCover: tidalCoverUrl(a.cover),
+    artworkURL: tidalCoverUrl(a.cover),
     year: a.releaseDate ? a.releaseDate.substring(0, 4) : null,
     trackCount: a.numberOfTracks || 0,
     audioQuality: qualityLabel(bit, sr, 'flac', Array.isArray(a.audioModes) ? a.audioModes : [])
@@ -165,7 +166,7 @@ function tidalMapArtist(a) {
   return {
     id: 'tidal:' + a.id,
     name: a.name || 'Unknown',
-    picture: tidalArtistPic(a.picture)
+    artworkURL: tidalArtistPic(a.picture)
   };
 }
 
@@ -194,9 +195,10 @@ function qobuzMapTrack(t) {
     title: t.title || 'Unknown',
     artist: artistName,
     album: (t.album && t.album.title) || '',
-    albumCover: cover,
+    artworkURL: cover,
     duration: t.duration || 0,
     isrc: t.isrc || null,
+    format: 'flac',
     audioQuality: qualityLabel(bit, sr, 'flac', []),
     _bit: bit, _sr: sr, _fmt: 'flac', _modes: [],
     _provider: 'Qobuz'
@@ -210,7 +212,7 @@ function qobuzMapAlbum(a) {
     id: 'qobuz:' + a.id,
     title: a.title || 'Unknown',
     artist: (a.artist && a.artist.name) || 'Unknown Artist',
-    albumCover: cover,
+    artworkURL: cover,
     year: a.released_at ? String(new Date(a.released_at * 1000).getFullYear()) : null,
     trackCount: a.tracks_count || 0,
     audioQuality: qualityLabel(a.maximum_bit_depth || 16, a.maximum_sampling_rate || 44.1, 'flac', [])
@@ -226,7 +228,7 @@ function qobuzMapArtist(a) {
   return {
     id: 'qobuz:' + a.id,
     name: a.name || 'Unknown',
-    picture: pic,
+    artworkURL: pic,
     albumCount: a.albums_count || 0
   };
 }
@@ -313,7 +315,7 @@ function mergeTracks(arrays) {
           existing._bit = t._bit;
           existing._sr = t._sr;
           existing.isrc = t.isrc || existing.isrc;
-          existing.albumCover = t.albumCover || existing.albumCover;
+          existing.artworkURL = t.artworkURL || existing.artworkURL;
         }
       } else {
         const clone = Object.assign({}, t);
@@ -465,6 +467,7 @@ app.get('/album/:id', async (req, res) => {
       if (!data) return res.status(404).json({ error: 'Album not found' });
 
       const album = tidalMapAlbum(data);
+      const cover = album.artworkURL;
       const tracks = ((data.tracks && data.tracks.items) ||
         (data.media && data.media[0] && data.media[0].tracks) || [])
         .map(t => {
@@ -474,9 +477,10 @@ app.get('/album/:id', async (req, res) => {
             id: tt.id,
             title: tt.title,
             artist: tt.artist,
+            album: album.title,
             duration: tt.duration,
-            artworkURL: tt.albumCover,
-            format: tt._fmt
+            artworkURL: cover,
+            format: tt.format || 'flac'
           };
         }).filter(Boolean);
 
@@ -488,6 +492,7 @@ app.get('/album/:id', async (req, res) => {
       if (!data) return res.status(404).json({ error: 'Album not found' });
 
       const album = qobuzMapAlbum(data);
+      const cover = album.artworkURL;
       const tracks = ((data.tracks && data.tracks.items) || [])
         .map(t => {
           const tt = qobuzMapTrack(t);
@@ -496,8 +501,9 @@ app.get('/album/:id', async (req, res) => {
             id: tt.id,
             title: tt.title,
             artist: tt.artist,
+            album: album.title,
             duration: tt.duration,
-            artworkURL: tt.albumCover,
+            artworkURL: cover,
             format: 'flac'
           };
         }).filter(Boolean);
@@ -531,9 +537,10 @@ app.get('/artist/:id', async (req, res) => {
             id: tt.id,
             title: tt.title,
             artist: tt.artist,
+            album: tt.album,
             duration: tt.duration,
-            artworkURL: tt.albumCover,
-            format: tt._fmt
+            artworkURL: tt.artworkURL,
+            format: tt.format || 'flac'
           };
         }).filter(Boolean);
       const albums = ((data.albums && data.albums.items) || [])
@@ -561,8 +568,9 @@ app.get('/artist/:id', async (req, res) => {
             id: tt.id,
             title: tt.title,
             artist: tt.artist,
+            album: tt.album,
             duration: tt.duration,
-            artworkURL: tt.albumCover,
+            artworkURL: tt.artworkURL,
             format: 'flac'
           };
         }).filter(Boolean);
