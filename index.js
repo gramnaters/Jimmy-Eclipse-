@@ -157,6 +157,7 @@ function tidalMapAlbum(a) {
     artworkURL: tidalCoverUrl(a.cover),
     year: a.releaseDate ? a.releaseDate.substring(0, 4) : null,
     trackCount: a.numberOfTracks || 0,
+    description: a.description || null,
     audioQuality: qualityLabel(bit, sr, 'flac', Array.isArray(a.audioModes) ? a.audioModes : [])
   };
 }
@@ -215,6 +216,7 @@ function qobuzMapAlbum(a) {
     artworkURL: cover,
     year: a.released_at ? String(new Date(a.released_at * 1000).getFullYear()) : null,
     trackCount: a.tracks_count || 0,
+    description: a.description || a.catchline || null,
     audioQuality: qualityLabel(a.maximum_bit_depth || 16, a.maximum_sampling_rate || 44.1, 'flac', [])
   };
 }
@@ -423,7 +425,8 @@ app.get('/stream/:id', async (req, res) => {
       res.json({
         url: data.streamUrl || data.url,
         format: 'flac',
-        quality: data.audioQuality || 'LOSSLESS'
+        quality: data.audioQuality || 'LOSSLESS',
+        expiresAt: Math.floor(Date.now() / 1000) + 600
       });
     } else if (id.startsWith('qobuz:')) {
       const rawId = id.split(':')[1];
@@ -444,7 +447,8 @@ app.get('/stream/:id', async (req, res) => {
       res.json({
         url: data.url,
         format: 'flac',
-        quality: qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, 'flac', [])
+        quality: qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, 'flac', []),
+        expiresAt: Math.floor(Date.now() / 1000) + 900
       });
     } else {
       res.status(400).json({ error: 'Unknown provider' });
