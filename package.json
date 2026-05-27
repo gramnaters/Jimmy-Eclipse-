@@ -1,0 +1,14 @@
+{
+  "name": "jimmy-eclipse",
+  "version": "1.0.0",
+  "description": "JIMMY addon for Eclipse Music - Qobuz + Tidal streaming",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "cors": "^2.8.5",
+    "node-fetch": "^2.7.0"
+  }
+}
