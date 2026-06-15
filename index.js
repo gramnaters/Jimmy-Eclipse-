@@ -8,15 +8,27 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Settings URL rewriter — /cfg/:settings/... → /...
-// Allows users to generate configurable manifest URLs like:
-//   /cfg/lossless/manifest.json  → quality preference: lossless
-//   /cfg/hires/manifest.json     → quality preference: hi-res
+// Settings URL rewriter — maps /cfg/... to internal shortcuts
+//   /cfg/{qobuz}-{tidal}/manifest.json  → qobuz+tidal quality override
+//   /cfg/{preset}/manifest.json         → legacy preset: auto|lossless|hires|max
 app.use((req, res, next) => {
-  const m = req.url.match(/^\/cfg\/([a-z0-9_-]+)(\/.*)$/);
+  let m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)(\/.*)$/);
   if (m) {
-    req.jimmySettings = m[1];
+    req.jimmySettings = { qobuz: m[1], tidal: m[2] };
+    req.url = m[3];
+    return next();
+  }
+  m = req.url.match(/^\/cfg\/([a-z0-9]+)(\/.*)$/);
+  if (m) {
+    const presets = {
+      auto:     { qobuz: 'hires',     tidal: 'hireslossless' },
+      lossless: { qobuz: 'cd',        tidal: 'lossless' },
+      hires:    { qobuz: 'hires',     tidal: 'hireslossless' },
+      max:      { qobuz: 'hiresmax',  tidal: 'hireslossless' }
+    };
+    req.jimmySettings = presets[m[1]] || presets.auto;
     req.url = m[2];
+    return next();
   }
   next();
 });
@@ -518,19 +530,28 @@ function landingPage(baseUrl) {
 
   <section class="cta">
     <div class="settings-row">
-      <label>Quality</label>
-      <select class="quality-select" onchange="updateUrl(this.value)">
-        <option value="auto">Auto (Best Available)</option>
-        <option value="lossless">Lossless (16-bit FLAC)</option>
-        <option value="hires">Hi-Res (24-bit FLAC)</option>
-        <option value="max">Maximum (24/192 + Atmos)</option>
+      <label>Qobuz</label>
+      <select class="quality-select" onchange="updateUrl()" id="qobuzSelect">
+        <option value="mp3">MP3 320kbps</option>
+        <option value="cd">CD - FLAC 16/44.1</option>
+        <option value="hires" selected>Hi-Res 24/96 (Default)</option>
+        <option value="hiresmax">Hi-Res 24/192 (Max)</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <label>Tidal</label>
+      <select class="quality-select" onchange="updateUrl()" id="tidalSelect">
+        <option value="low">Low</option>
+        <option value="high">High</option>
+        <option value="lossless">Lossless</option>
+        <option value="hireslossless" selected>Hi-Res Lossless (Default)</option>
       </select>
     </div>
     <div class="url-box">
-      <input type="text" value="${addonUrl}" readonly id="manifestUrl" onclick="this.select()">
+      <input type="text" value="${baseUrl}/cfg/hires-hireslossless/manifest.json" readonly id="manifestUrl" onclick="this.select()">
       <button onclick="copyManifestUrl(getUrl())" class="copy-btn">Copy Manifest URL</button>
     </div>
-    <p>Choose a quality preset above, then copy the manifest URL and paste it into Eclipse &rarr; Settings &rarr; Cloud Storage &rarr; Add Connection &rarr; Addons.</p>
+    <p>Choose quality presets above, then copy the manifest URL and paste it into Eclipse &rarr; Settings &rarr; Cloud Storage &rarr; Add Connection &rarr; Addons.</p>
   </section>
 </main>
 
@@ -547,13 +568,12 @@ function landingPage(baseUrl) {
 <div id="copy-toast" class="copy-toast">Copied!</div>
 <script>
 var baseUrl = '${baseUrl}';
-var currentQuality = 'auto';
 function getUrl(){
-  if(currentQuality==='auto') return baseUrl+'/manifest.json';
-  return baseUrl+'/cfg/'+currentQuality+'/manifest.json';
+  var q = document.getElementById('qobuzSelect').value;
+  var t = document.getElementById('tidalSelect').value;
+  return baseUrl+'/cfg/'+q+'-'+t+'/manifest.json';
 }
-function updateUrl(quality){
-  currentQuality = quality;
+function updateUrl(){
   document.getElementById('manifestUrl').value = getUrl();
 }
 function copyManifestUrl(url){
@@ -596,11 +616,17 @@ app.get('/', (req, res) => {
 
 // 1. Manifest
 app.get('/manifest.json', (req, res) => {
-  const settings = req.jimmySettings || 'auto';
-  const qualLabels = { lossless: ' (Lossless)', hires: ' (Hi-Res)', max: ' (Max)', auto: '' };
+  const settings = req.jimmySettings;
+  const qobuzLabels = { mp3: 'MP3', cd: 'CD FLAC', hires: 'Hi-Res 24/96', hiresmax: 'Hi-Res 24/192' };
+  const tidalLabels = { low: 'Low', high: 'High', lossless: 'Lossless', hireslossless: 'Hi-Res Lossless' };
+  let name = 'JIMMY';
+  if (settings) {
+    name = 'JIMMY (Qobuz ' + (qobuzLabels[settings.qobuz] || settings.qobuz) +
+      ' + Tidal ' + (tidalLabels[settings.tidal] || settings.tidal) + ')';
+  }
   res.json({
     id: 'com.lateralus.jimmy',
-    name: 'JIMMY' + (qualLabels[settings] || ''),
+    name: name,
     version: currentVersion,
     description: 'Just an Incredible Music Module, Yup! — Qobuz + Tidal high-res streaming for Eclipse',
     icon: 'https://jimmy-iota.vercel.app/icon.png',
@@ -644,12 +670,17 @@ app.get('/search', async (req, res) => {
 // 3. Stream resolution
 app.get('/stream/:id', async (req, res) => {
   const id = req.params.id;
-  const settings = req.jimmySettings || 'auto';
+  const settings = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless' };
+  const qobuzFormatMap = { mp3: 5, cd: 6, hires: 7, hiresmax: 27 };
+  const qobuzFormatId = qobuzFormatMap[settings.qobuz] || 27;
+  const tidalQualityMap = { low: 'LOW', high: 'HIGH', lossless: 'LOSSLESS', hireslossless: 'HI_RES_LOSSLESS' };
+  const tidalQuality = tidalQualityMap[settings.tidal] || 'HI_RES_LOSSLESS';
 
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      const url = BACKEND_CACHE_BASE + '/track/' + encodeURIComponent(rawId);
+      const url = BACKEND_CACHE_BASE + '/track/' + encodeURIComponent(rawId) +
+        '?quality=' + tidalQuality;
       const data = await withTimeout(
         fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
         REQUEST_TIMEOUT_MS
@@ -657,14 +688,13 @@ app.get('/stream/:id', async (req, res) => {
 
       res.json({
         url: data.streamUrl || data.url,
-        format: 'flac',
-        quality: data.audioQuality || 'LOSSLESS',
+        format: tidalQuality === 'HI_RES_LOSSLESS' || tidalQuality === 'LOSSLESS' ? 'flac' : 'aac',
+        quality: data.audioQuality || tidalQuality,
         expiresAt: Math.floor(Date.now() / 1000) + 600
       });
     } else if (id.startsWith('qobuz:')) {
       const rawId = id.split(':')[1];
-      const qobuzFormatMap = { lossless: 6, hires: 27, max: 27, auto: 27 };
-      const formatId = qobuzFormatMap[settings] || 27;
+      const formatId = qobuzFormatId;
       const ts = Math.floor(Date.now() / 1000);
       const sig = md5('trackgetFileUrl' + 'format_id' + formatId + 'intentstream' +
         'track_id' + rawId + ts + QOBUZ.secret);
