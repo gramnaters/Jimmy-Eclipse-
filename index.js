@@ -475,10 +475,10 @@ function landingPage(baseUrl) {
   .cta .button:hover{transform:translateY(-1px);box-shadow:0 14px 44px -8px rgba(255,255,255,.28)}
   .cta .button:active{transform:translateY(0)}
   .cta p{font-size:14px;color:#888;margin-top:24px;line-height:1.6;max-width:380px;margin-left:auto;margin-right:auto}
-  .url-box{display:flex;gap:0;max-width:560px;width:100%;margin:0 auto;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden;background:#0a0a0a}
-  .url-box input{flex:1;background:transparent;border:none;color:#ccc;font-size:11px;padding:14px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;outline:none;min-width:0}
-  .url-box input::selection{background:rgba(255,80,80,.3)}
-  .copy-btn{background:#fff;color:#000;border:none;border-radius:12px;padding:12px 22px;font-size:13px;font-weight:700;cursor:pointer;transition:all .25s ease;white-space:nowrap}
+  .url-box{max-width:560px;width:100%;margin:0 auto}
+  .url-box textarea{display:block;width:100%;background:#0a0a0a;border:1px solid #1f1f1f;border-radius:12px;color:#ccc;font-size:11px;padding:12px 14px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;outline:none;resize:none;white-space:normal;word-break:break-all;line-height:1.6;min-height:44px}
+  .url-box textarea::selection{background:rgba(255,80,80,.3)}
+  .copy-btn{display:block;width:100%;background:#fff;color:#000;border:none;border-radius:12px;padding:12px 22px;font-size:13px;font-weight:700;cursor:pointer;transition:all .25s ease;white-space:nowrap;margin-top:10px}
   .copy-btn:hover{background:#f0f0f0;transform:translateY(-1px)}
   .copy-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#22c55e;color:#000;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
   .copy-toast.show{opacity:1}
@@ -548,7 +548,7 @@ function landingPage(baseUrl) {
       </select>
     </div>
     <div class="url-box">
-      <input type="text" value="${baseUrl}/cfg/hires-hireslossless/manifest.json" readonly id="manifestUrl" onclick="this.select()">
+      <textarea readonly id="manifestUrl" onclick="this.select()" rows="2">${baseUrl}/cfg/hires-hireslossless/manifest.json</textarea>
       <button onclick="copyManifestUrl(getUrl())" class="copy-btn">Copy Manifest URL</button>
     </div>
     <p>Choose quality presets above, then copy the manifest URL and paste it into Eclipse &rarr; Settings &rarr; Cloud Storage &rarr; Add Connection &rarr; Addons.</p>
