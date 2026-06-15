@@ -453,9 +453,10 @@ function landingPage(baseUrl) {
   .url-box{display:flex;gap:0;max-width:420px;width:100%;margin:0 auto;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden;background:#0a0a0a}
   .url-box input{flex:1;background:transparent;border:none;color:#ccc;font-size:13px;padding:14px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;outline:none;min-width:0}
   .url-box input::selection{background:rgba(255,80,80,.3)}
-  .url-box button{background:#fff;color:#000;border:none;font-weight:800;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 20px;cursor:pointer;white-space:nowrap;transition:opacity .15s ease}
-  .url-box button:hover{opacity:.85}
-  .url-box button.copied{background:#1a1a1a;color:#4f4}
+  .copy-btn{background:#fff;color:#000;border:none;border-radius:12px;padding:12px 22px;font-size:13px;font-weight:700;cursor:pointer;transition:all .25s ease;white-space:nowrap}
+  .copy-btn:hover{background:#f0f0f0;transform:translateY(-1px)}
+  .copy-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#22c55e;color:#000;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
+  .copy-toast.show{opacity:1}
   footer{padding:32px 24px 24px;text-align:center;color:#444;font-size:12px;letter-spacing:.3px;border-top:1px solid #0e0e0e}
   footer a{color:#777;text-decoration:none}
   footer a:hover{color:#fff}
@@ -500,9 +501,9 @@ function landingPage(baseUrl) {
   <section class="cta">
     <div class="url-box">
       <input type="text" value="${addonUrl}" readonly id="manifestUrl" onclick="this.select()">
-      <button onclick="copyUrl()" id="copyBtn">Copy</button>
+      <button onclick="copyManifestUrl('${addonUrl}')" class="copy-btn">Copy Manifest URL</button>
     </div>
-    <p>Copy the manifest URL above and paste it into Eclipse &rarr; Settings &rarr; Connections &rarr; Add Connection &rarr; Addon.</p>
+    <p>Paste the URL above into Eclipse &rarr; Settings &rarr; Cloud Storage &rarr; Add Connection &rarr; Addons.</p>
   </section>
 </main>
 
@@ -516,15 +517,30 @@ function landingPage(baseUrl) {
   </div>
   <p class="disclaimer">Not affiliated with 8SPINE, Eclipse, or their creators.</p>
 </footer>
+<div id="copy-toast" class="copy-toast">Copied!</div>
 <script>
-function copyUrl() {
-  const input = document.getElementById('manifestUrl');
-  const btn = document.getElementById('copyBtn');
-  input.select();
-  document.execCommand('copy');
-  btn.textContent = 'Copied!';
-  btn.classList.add('copied');
-  setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+function copyManifestUrl(url){
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(showToast,fallbackCopy);
+  }else{
+    fallbackCopy();
+  }
+  function fallbackCopy(){
+    var ta=document.createElement('textarea');
+    ta.value=url;
+    ta.style.position='fixed';
+    ta.style.left='-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try{document.execCommand('copy');}catch(e){}
+    document.body.removeChild(ta);
+    showToast();
+  }
+}
+function showToast(){
+  var t=document.getElementById('copy-toast');
+  t.classList.add('show');
+  setTimeout(function(){t.classList.remove('show');},1800);
 }
 </script>
 </body>
