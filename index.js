@@ -475,8 +475,8 @@ function landingPage(baseUrl) {
   .cta .button:hover{transform:translateY(-1px);box-shadow:0 14px 44px -8px rgba(255,255,255,.28)}
   .cta .button:active{transform:translateY(0)}
   .cta p{font-size:14px;color:#888;margin-top:24px;line-height:1.6;max-width:380px;margin-left:auto;margin-right:auto}
-  .url-box{display:flex;gap:0;max-width:420px;width:100%;margin:0 auto;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden;background:#0a0a0a}
-  .url-box input{flex:1;background:transparent;border:none;color:#ccc;font-size:13px;padding:14px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;outline:none;min-width:0}
+  .url-box{display:flex;gap:0;max-width:560px;width:100%;margin:0 auto;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden;background:#0a0a0a}
+  .url-box input{flex:1;background:transparent;border:none;color:#ccc;font-size:11px;padding:14px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;outline:none;min-width:0}
   .url-box input::selection{background:rgba(255,80,80,.3)}
   .copy-btn{background:#fff;color:#000;border:none;border-radius:12px;padding:12px 22px;font-size:13px;font-weight:700;cursor:pointer;transition:all .25s ease;white-space:nowrap}
   .copy-btn:hover{background:#f0f0f0;transform:translateY(-1px)}
