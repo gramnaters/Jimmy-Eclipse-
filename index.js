@@ -8,6 +8,53 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// --- Auto-update version from official JIMMY source ---
+
+const SOURCE_INDEX_URL = 'https://jimmy-iota.vercel.app/index.json';
+const SOURCE_MANIFEST_URL = 'https://jimmy-iota.vercel.app/manifest.json';
+const UPDATE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const FALLBACK_VERSION = '2.0.0';
+
+let currentVersion = FALLBACK_VERSION;
+let currentCodeVersion = 200;
+
+async function fetchSourceVersion() {
+  try {
+    const res = await withTimeout(fetch(SOURCE_INDEX_URL), 10000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data && data['category:modules']) {
+      const jimmy = data['category:modules'].find(m => m.id === 'jimmy');
+      if (jimmy && jimmy.version) {
+        currentVersion = jimmy.version;
+        currentCodeVersion = jimmy.code || 200;
+        console.log(`[JIMMY] Version synced from source: v${currentVersion} (code ${currentCodeVersion})`);
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('[JIMMY] index.json fetch failed, trying manifest.json:', e.message);
+  }
+  try {
+    const res = await withTimeout(fetch(SOURCE_MANIFEST_URL), 10000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data && data.version) {
+      currentVersion = data.version;
+      console.log(`[JIMMY] Version synced from manifest: v${currentVersion}`);
+      return;
+    }
+  } catch (e) {
+    console.warn('[JIMMY] manifest.json fetch failed, using fallback:', e.message);
+  }
+  console.log(`[JIMMY] Using fallback version: v${currentVersion}`);
+}
+
+function startAutoUpdate() {
+  fetchSourceVersion();
+  setInterval(fetchSourceVersion, UPDATE_INTERVAL_MS);
+}
+
 // --- Config (from JIMMY v1.6.16) ---
 
 const QOBUZ = {
@@ -361,6 +408,120 @@ function mergeArtists(arrays) {
   return out;
 }
 
+// --- Landing Page ---
+
+function landingPage(baseUrl) {
+  const addonUrl = baseUrl + '/manifest.json';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JIMMY x Eclipse — Hear the piracy.</title>
+<meta name="description" content="JIMMY — Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
+<meta property="og:title" content="JIMMY x Eclipse — Hear the piracy.">
+<meta property="og:description" content="Hi-fi hybrid pulling Qobuz + Tidal back-to-back. Lossless, Hi-Res, Dolby Atmos streaming for Eclipse Music.">
+<meta property="og:image" content="https://jimmy-iota.vercel.app/icon.png">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:#000;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  body{min-height:100vh;display:flex;flex-direction:column;line-height:1.5}
+  nav{padding:24px 32px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #0e0e0e}
+  nav .brand{font-size:12px;letter-spacing:2.5px;font-weight:900;color:#666;text-transform:uppercase}
+  nav .brand b{color:#fff;font-weight:900}
+  nav .brand i{font-style:normal;color:#444;margin:0 6px}
+  nav a{color:#666;text-decoration:none;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;font-weight:800}
+  nav a:hover{color:#fff}
+  main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;gap:32px}
+  .card{background:linear-gradient(180deg,#0c0c0c 0%,#080808 100%);border:1px solid #1a1a1a;border-radius:24px;padding:48px 32px;max-width:520px;width:100%;text-align:center;position:relative;overflow:hidden}
+  .card::before{content:'';position:absolute;top:-1px;left:50%;transform:translateX(-50%);width:60%;height:1px;background:linear-gradient(90deg,transparent 0%,rgba(255,80,80,.4) 50%,transparent 100%)}
+  .card .icon{width:200px;height:200px;margin:0 auto 28px;display:block;object-fit:contain;filter:drop-shadow(0 24px 48px rgba(255,80,80,.28)) drop-shadow(0 2px 0 rgba(255,255,255,.04))}
+  .card h1{font-family:'Arial Black','Helvetica Neue',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-size:60px;letter-spacing:-2px;font-weight:900;line-height:1;margin-bottom:10px;text-transform:uppercase;-webkit-text-stroke:1px #fff}
+  .card h1 sup{font-size:18px;letter-spacing:0;font-weight:700;vertical-align:super;color:#bbb;-webkit-text-stroke:0;margin-left:4px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+  .card .meta{font-size:11px;color:#666;letter-spacing:2.5px;text-transform:uppercase;margin-bottom:24px;font-weight:800}
+  .card .meta b{color:#bbb;font-weight:800}
+  .card .meta i{font-style:normal;color:#333;margin:0 8px}
+  .card .slogan{font-size:20px;color:#fff;font-weight:800;letter-spacing:-.4px;margin-bottom:14px;font-style:italic}
+  .card .desc{font-size:14px;color:#9a9a9a;max-width:420px;margin:0 auto 28px;line-height:1.65}
+  .card .tags{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+  .card .tag{font-size:10px;padding:7px 12px;background:#111;border:1px solid #1f1f1f;border-radius:99px;color:#a0a0a0;letter-spacing:1.5px;font-weight:800;text-transform:uppercase}
+  .cta{text-align:center;max-width:520px;width:100%}
+  .cta .button{display:inline-flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#000;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-decoration:none;padding:20px 36px;border-radius:14px;width:100%;max-width:320px;transition:transform .15s ease,box-shadow .15s ease;box-shadow:0 8px 32px -8px rgba(255,255,255,.18)}
+  .cta .button:hover{transform:translateY(-1px);box-shadow:0 14px 44px -8px rgba(255,255,255,.28)}
+  .cta .button:active{transform:translateY(0)}
+  .cta .button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:10px;background:transparent;color:#888;font-weight:800;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;text-decoration:none;padding:16px 24px;border-radius:14px;width:100%;max-width:320px;border:1px solid #1f1f1f;margin-top:12px;transition:all .15s ease}
+  .cta .button-secondary:hover{color:#fff;border-color:#444}
+  .cta p{font-size:14px;color:#888;margin-top:24px;line-height:1.6;max-width:380px;margin-left:auto;margin-right:auto}
+  footer{padding:32px 24px 24px;text-align:center;color:#444;font-size:12px;letter-spacing:.3px;border-top:1px solid #0e0e0e}
+  footer a{color:#777;text-decoration:none}
+  footer a:hover{color:#fff}
+  footer .links{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap}
+  footer .sep{color:#222}
+  footer .discord{color:#777}
+  footer .discord b{color:#bbb;font-weight:700}
+  footer .disclaimer{margin-top:10px;color:#2a2a2a;font-size:10px;letter-spacing:.2px}
+  @media(max-width:600px){
+    nav{padding:18px 20px}
+    nav a.gh{display:none}
+    main{padding:32px 16px}
+    .card{padding:36px 24px;border-radius:20px}
+    .card h1{font-size:48px;letter-spacing:-1.5px}
+    .card h1 sup{font-size:14px}
+    .card .icon{width:160px;height:160px;margin-bottom:24px}
+    .cta .button{padding:18px 28px;font-size:13px}
+  }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand"><b>Eclipse</b><i>x</i><b>JIMMY</b></div>
+  <a href="https://github.com/bacard1i" class="gh">GitHub</a>
+</nav>
+
+<main>
+  <section class="card">
+    <img src="https://jimmy-iota.vercel.app/icon.png" class="icon" alt="JIMMY">
+    <h1>JIMMY<sup>&reg;</sup></h1>
+    <div class="meta"><b>v${currentVersion}</b><i>·</i>by Lateralus</div>
+    <p class="slogan">Hear the piracy.</p>
+    <p class="desc">Jimmy's a high fidelity hybrid music module, which uses both Qobuz &amp; Tidal altogether. Main philosophy of jimmy is Quality audio rather than GSD ASAP. jimmy has Apple music metadata built-in &amp; is compatible with Eclipse, delivering every track flawlessly. Jimmy is what Quality convenience every user should experience, enjoy ;)</p>
+    <div class="tags">
+      <span class="tag">Hi-Res</span>
+      <span class="tag">Lossless</span>
+      <span class="tag">Hi-Res 192kHz</span>
+      <span class="tag">Dolby Atmos</span>
+    </div>
+  </section>
+
+  <section class="cta">
+    <a class="button" href="eclipsemusic://addon?url=${encodeURIComponent(addonUrl)}">Add to Eclipse</a>
+    <a class="button-secondary" href="eightspine://source?url=${encodeURIComponent(baseUrl + '/index.json')}">Add to 8SPINE</a>
+    <p>Tap the button to add JIMMY to your Eclipse app. If the button doesn't open Eclipse, copy this URL into Eclipse Settings &rarr; Connections &rarr; Add Connection &rarr; Addon:<br><code style="font-size:11px;word-break:break-all;color:#aaa">${addonUrl}</code></p>
+  </section>
+</main>
+
+<footer>
+  <div class="links">
+    <a href="https://github.com/bacard1i">github.com/bacard1i</a>
+    <span class="sep">&middot;</span>
+    <span class="discord">Discord <b>.bacardii.</b></span>
+    <span class="sep">&middot;</span>
+    <span>MIT</span>
+  </div>
+  <p class="disclaimer">Not affiliated with 8SPINE, Eclipse, or their creators.</p>
+</footer>
+</body>
+</html>`;
+}
+
+app.get('/', (req, res) => {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.get('host');
+  const baseUrl = protocol + '://' + host;
+  res.set('Content-Type', 'text/html');
+  res.send(landingPage(baseUrl));
+});
+
 // --- Eclipse Endpoints ---
 
 // 1. Manifest
@@ -368,7 +529,7 @@ app.get('/manifest.json', (req, res) => {
   res.json({
     id: 'com.lateralus.jimmy',
     name: 'JIMMY',
-    version: '1.6.16',
+    version: currentVersion,
     description: 'Just an Incredible Music Module, Yup! — Qobuz + Tidal high-res streaming for Eclipse',
     icon: 'https://jimmy-iota.vercel.app/icon.png',
     resources: ['search', 'stream', 'catalog'],
@@ -591,10 +752,40 @@ app.get('/artist/:id', async (req, res) => {
   }
 });
 
+// 8SPINE module catalog
+app.get('/index.json', (req, res) => {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.get('host');
+  const baseUrl = protocol + '://' + host;
+  res.json({
+    'category:modules': [{
+      id: 'jimmy',
+      name: 'JIMMY',
+      pkg: 'com.lateralus.module.jimmy',
+      file: 'jimmy.js',
+      download: baseUrl + '/jimmy.js',
+      version: currentVersion,
+      code: currentCodeVersion,
+      type: 'MODULE',
+      author: 'Lateralus',
+      description: 'Hear the piracy.',
+      tags: ['DOLBY-ATMOS', 'LOSSLESS', 'HI-RES', 'HI-RES(192kHz)'],
+      size: 91361,
+      sizeLabel: '89 KB',
+      logo: 'https://jimmy-iota.vercel.app/icon.png',
+      icon: 'https://jimmy-iota.vercel.app/icon.png',
+      sources: [{ name: 'Lateralus', lang: 'all', id: 'lateralus', baseUrl: '.' }],
+      lastUpdated: new Date().toISOString().slice(0, 10)
+    }]
+  });
+});
+
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', module: 'jimmy', version: '1.6.16' });
+  res.json({ status: 'ok', module: 'jimmy', version: currentVersion });
 });
+
+startAutoUpdate();
 
 module.exports = app;
 
