@@ -8,6 +8,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Settings URL rewriter — /cfg/:settings/... → /...
+// Allows users to generate configurable manifest URLs like:
+//   /cfg/lossless/manifest.json  → quality preference: lossless
+//   /cfg/hires/manifest.json     → quality preference: hi-res
+app.use((req, res, next) => {
+  const m = req.url.match(/^\/cfg\/([a-z0-9_-]+)(\/.*)$/);
+  if (m) {
+    req.jimmySettings = m[1];
+    req.url = m[2];
+  }
+  next();
+});
+
 // --- Auto-update version from official JIMMY source ---
 
 const SOURCE_INDEX_URL = 'https://jimmy-iota.vercel.app/index.json';
@@ -457,6 +470,11 @@ function landingPage(baseUrl) {
   .copy-btn:hover{background:#f0f0f0;transform:translateY(-1px)}
   .copy-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#22c55e;color:#000;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
   .copy-toast.show{opacity:1}
+  .settings-row{display:flex;align-items:center;gap:12px;max-width:420px;width:100%;margin:0 auto 16px;justify-content:center}
+  .settings-row label{font-size:12px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;white-space:nowrap}
+  .quality-select{background:#0a0a0a;border:1px solid #1f1f1f;color:#ccc;font-size:13px;padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;outline:none;min-width:180px;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+  .quality-select:hover{border-color:#333}
+  .quality-select option{background:#111;color:#ccc}
   footer{padding:32px 24px 24px;text-align:center;color:#444;font-size:12px;letter-spacing:.3px;border-top:1px solid #0e0e0e}
   footer a{color:#777;text-decoration:none}
   footer a:hover{color:#fff}
@@ -499,11 +517,20 @@ function landingPage(baseUrl) {
   </section>
 
   <section class="cta">
+    <div class="settings-row">
+      <label>Quality</label>
+      <select class="quality-select" onchange="updateUrl(this.value)">
+        <option value="auto">Auto (Best Available)</option>
+        <option value="lossless">Lossless (16-bit FLAC)</option>
+        <option value="hires">Hi-Res (24-bit FLAC)</option>
+        <option value="max">Maximum (24/192 + Atmos)</option>
+      </select>
+    </div>
     <div class="url-box">
       <input type="text" value="${addonUrl}" readonly id="manifestUrl" onclick="this.select()">
-      <button onclick="copyManifestUrl('${addonUrl}')" class="copy-btn">Copy Manifest URL</button>
+      <button onclick="copyManifestUrl(getUrl())" class="copy-btn">Copy Manifest URL</button>
     </div>
-    <p>Paste the URL above into Eclipse &rarr; Settings &rarr; Cloud Storage &rarr; Add Connection &rarr; Addons.</p>
+    <p>Choose a quality preset above, then copy the manifest URL and paste it into Eclipse &rarr; Settings &rarr; Cloud Storage &rarr; Add Connection &rarr; Addons.</p>
   </section>
 </main>
 
@@ -519,6 +546,16 @@ function landingPage(baseUrl) {
 </footer>
 <div id="copy-toast" class="copy-toast">Copied!</div>
 <script>
+var baseUrl = '${baseUrl}';
+var currentQuality = 'auto';
+function getUrl(){
+  if(currentQuality==='auto') return baseUrl+'/manifest.json';
+  return baseUrl+'/cfg/'+currentQuality+'/manifest.json';
+}
+function updateUrl(quality){
+  currentQuality = quality;
+  document.getElementById('manifestUrl').value = getUrl();
+}
 function copyManifestUrl(url){
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(url).then(showToast,fallbackCopy);
@@ -559,9 +596,11 @@ app.get('/', (req, res) => {
 
 // 1. Manifest
 app.get('/manifest.json', (req, res) => {
+  const settings = req.jimmySettings || 'auto';
+  const qualLabels = { lossless: ' (Lossless)', hires: ' (Hi-Res)', max: ' (Max)', auto: '' };
   res.json({
     id: 'com.lateralus.jimmy',
-    name: 'JIMMY',
+    name: 'JIMMY' + (qualLabels[settings] || ''),
     version: currentVersion,
     description: 'Just an Incredible Music Module, Yup! — Qobuz + Tidal high-res streaming for Eclipse',
     icon: 'https://jimmy-iota.vercel.app/icon.png',
@@ -605,11 +644,11 @@ app.get('/search', async (req, res) => {
 // 3. Stream resolution
 app.get('/stream/:id', async (req, res) => {
   const id = req.params.id;
+  const settings = req.jimmySettings || 'auto';
 
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      // Use the backend for Tidal stream resolution
       const url = BACKEND_CACHE_BASE + '/track/' + encodeURIComponent(rawId);
       const data = await withTimeout(
         fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
@@ -624,7 +663,8 @@ app.get('/stream/:id', async (req, res) => {
       });
     } else if (id.startsWith('qobuz:')) {
       const rawId = id.split(':')[1];
-      const formatId = req.query.quality === 'MP3' ? 5 : 27;
+      const qobuzFormatMap = { lossless: 6, hires: 27, max: 27, auto: 27 };
+      const formatId = qobuzFormatMap[settings] || 27;
       const ts = Math.floor(Date.now() / 1000);
       const sig = md5('trackgetFileUrl' + 'format_id' + formatId + 'intentstream' +
         'track_id' + rawId + ts + QOBUZ.secret);
