@@ -8,23 +8,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Settings URL rewriter — maps /cfg/... to internal shortcuts
-//   /cfg/{qobuz}-{tidal}/manifest.json  → qobuz+tidal quality override
-//   /cfg/{preset}/manifest.json         → legacy preset: auto|lossless|hires|max
+// Settings URL rewriter
+//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  → full quality config
+//   /cfg/{preset}/manifest.json                → legacy preset
 app.use((req, res, next) => {
-  let m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)(\/.*)$/);
+  let m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)-(on|off)(\/.*)$/);
   if (m) {
-    req.jimmySettings = { qobuz: m[1], tidal: m[2] };
+    req.jimmySettings = { qobuz: m[1], tidal: m[2], max: m[3] };
+    req.url = m[4];
+    return next();
+  }
+  m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)(\/.*)$/);
+  if (m) {
+    req.jimmySettings = { qobuz: m[1], tidal: m[2], max: (m[1] === 'hiresmax' ? 'on' : 'off') };
     req.url = m[3];
     return next();
   }
   m = req.url.match(/^\/cfg\/([a-z0-9]+)(\/.*)$/);
   if (m) {
     const presets = {
-      auto:     { qobuz: 'hires',     tidal: 'hireslossless' },
-      lossless: { qobuz: 'cd',        tidal: 'lossless' },
-      hires:    { qobuz: 'hires',     tidal: 'hireslossless' },
-      max:      { qobuz: 'hiresmax',  tidal: 'hireslossless' }
+      auto:     { qobuz: 'hires', tidal: 'hireslossless', max: 'on' },
+      lossless: { qobuz: 'cd',    tidal: 'lossless',      max: 'off' },
+      hires:    { qobuz: 'hires', tidal: 'hireslossless', max: 'off' },
+      max:      { qobuz: 'hires', tidal: 'hireslossless', max: 'on' }
     };
     req.jimmySettings = presets[m[1]] || presets.auto;
     req.url = m[2];
@@ -482,11 +488,22 @@ function landingPage(baseUrl) {
   .copy-btn:hover{background:#f0f0f0;transform:translateY(-1px)}
   .copy-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#22c55e;color:#000;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
   .copy-toast.show{opacity:1}
-  .settings-row{display:flex;align-items:center;gap:12px;max-width:420px;width:100%;margin:0 auto 16px;justify-content:center}
-  .settings-row label{font-size:12px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;white-space:nowrap}
+  .settings-row{display:flex;align-items:center;gap:12px;max-width:560px;width:100%;margin:0 auto 12px;justify-content:center}
+  .settings-row label{font-size:12px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;white-space:nowrap;min-width:48px}
+  .settings-desc{font-size:10px;color:#555;margin-top:2px;text-align:center}
   .quality-select{background:#0a0a0a;border:1px solid #1f1f1f;color:#ccc;font-size:13px;padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;outline:none;min-width:180px;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
   .quality-select:hover{border-color:#333}
   .quality-select option{background:#111;color:#ccc}
+  .toggle-row{display:flex;align-items:center;gap:12px;max-width:560px;width:100%;margin:0 auto 12px;justify-content:center}
+  .toggle-row.hidden{display:none}
+  .toggle-switch{position:relative;width:44px;height:26px;flex-shrink:0}
+  .toggle-switch input{opacity:0;width:0;height:0}
+  .toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#1f1f1f;border-radius:26px;transition:background .2s}
+  .toggle-slider:before{position:absolute;content:'';height:20px;width:20px;left:3px;bottom:3px;background:#555;border-radius:50%;transition:.2s}
+  .toggle-switch input:checked+.toggle-slider{background:#fff}
+  .toggle-switch input:checked+.toggle-slider:before{background:#000;transform:translateX(18px)}
+  .toggle-label{font-size:12px;font-weight:600;color:#bbb}
+  .toggle-hint{font-size:10px;color:#555;display:block}
   footer{padding:32px 24px 24px;text-align:center;color:#444;font-size:12px;letter-spacing:.3px;border-top:1px solid #0e0e0e}
   footer a{color:#777;text-decoration:none}
   footer a:hover{color:#fff}
@@ -531,13 +548,22 @@ function landingPage(baseUrl) {
   <section class="cta">
     <div class="settings-row">
       <label>Qobuz</label>
-      <select class="quality-select" onchange="updateUrl()" id="qobuzSelect">
+      <select class="quality-select" onchange="onQobuzChange()" id="qobuzSelect">
         <option value="mp3">MP3 320kbps</option>
         <option value="cd">CD - FLAC 16/44.1</option>
         <option value="hires" selected>Hi-Res 24/96 (Default)</option>
-        <option value="hiresmax">Hi-Res 24/192 (Max)</option>
       </select>
     </div>
+    <div class="settings-desc">Hi-Res 24/96 is the safe Hi-Res default. Enable the Hi-Res Max toggle below to unlock 24/192 when available.</div>
+    <div class="toggle-row" id="maxToggleRow">
+      <label class="toggle-label">Hi-Res Max (24/192)</label>
+      <label class="toggle-switch">
+        <input type="checkbox" id="maxToggle" checked onchange="updateUrl()">
+        <span class="toggle-slider"></span>
+      </label>
+      <span style="font-size:11px;color:#888" id="maxLabel">On</span>
+    </div>
+    <div class="toggle-hint" id="maxHint">Only takes effect when Qobuz is set to Hi-Res 24/96. When On, requests 24/192 masters and falls back to 24/96 if unavailable. No effect on MP3 or CD.</div>
     <div class="settings-row">
       <label>Tidal</label>
       <select class="quality-select" onchange="updateUrl()" id="tidalSelect">
@@ -548,7 +574,7 @@ function landingPage(baseUrl) {
       </select>
     </div>
     <div class="url-box">
-      <textarea readonly id="manifestUrl" onclick="this.select()" rows="2">${baseUrl}/cfg/hires-hireslossless/manifest.json</textarea>
+      <textarea readonly id="manifestUrl" onclick="this.select()" rows="2">${baseUrl}/cfg/hires-hireslossless-on/manifest.json</textarea>
       <button onclick="copyManifestUrl(getUrl())" class="copy-btn">Copy Manifest URL</button>
     </div>
     <p>Choose quality presets above, then copy the manifest URL and paste it into Eclipse &rarr; Settings &rarr; Cloud Storage &rarr; Add Connection &rarr; Addons.</p>
@@ -571,10 +597,26 @@ var baseUrl = '${baseUrl}';
 function getUrl(){
   var q = document.getElementById('qobuzSelect').value;
   var t = document.getElementById('tidalSelect').value;
-  return baseUrl+'/cfg/'+q+'-'+t+'/manifest.json';
+  var m = document.getElementById('maxToggle').checked ? 'on' : 'off';
+  return baseUrl+'/cfg/'+q+'-'+t+'-'+m+'/manifest.json';
 }
 function updateUrl(){
   document.getElementById('manifestUrl').value = getUrl();
+  var max = document.getElementById('maxToggle').checked;
+  document.getElementById('maxLabel').textContent = max ? 'On' : 'Off';
+}
+function onQobuzChange(){
+  var row = document.getElementById('maxToggleRow');
+  var hint = document.getElementById('maxHint');
+  var q = document.getElementById('qobuzSelect').value;
+  if(q==='hires'){
+    row.classList.remove('hidden');
+    hint.style.display = '';
+  }else{
+    row.classList.add('hidden');
+    hint.style.display = 'none';
+  }
+  updateUrl();
 }
 function copyManifestUrl(url){
   if(navigator.clipboard&&navigator.clipboard.writeText){
@@ -616,13 +658,14 @@ app.get('/', (req, res) => {
 
 // 1. Manifest
 app.get('/manifest.json', (req, res) => {
-  const settings = req.jimmySettings;
-  const qobuzLabels = { mp3: 'MP3', cd: 'CD FLAC', hires: 'Hi-Res 24/96', hiresmax: 'Hi-Res 24/192' };
+  const s = req.jimmySettings;
+  const qobuzLabels = { mp3: 'MP3', cd: 'CD FLAC', hires: 'Hi-Res 24/96' };
   const tidalLabels = { low: 'Low', high: 'High', lossless: 'Lossless', hireslossless: 'Hi-Res Lossless' };
   let name = 'JIMMY';
-  if (settings) {
-    name = 'JIMMY (Qobuz ' + (qobuzLabels[settings.qobuz] || settings.qobuz) +
-      ' + Tidal ' + (tidalLabels[settings.tidal] || settings.tidal) + ')';
+  if (s) {
+    name = 'JIMMY (Qobuz ' + (qobuzLabels[s.qobuz] || s.qobuz) +
+      (s.qobuz === 'hires' && s.max === 'on' ? ' + Max 24/192' : '') +
+      ' + Tidal ' + (tidalLabels[s.tidal] || s.tidal) + ')';
   }
   res.json({
     id: 'com.lateralus.jimmy',
@@ -670,11 +713,13 @@ app.get('/search', async (req, res) => {
 // 3. Stream resolution
 app.get('/stream/:id', async (req, res) => {
   const id = req.params.id;
-  const settings = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless' };
-  const qobuzFormatMap = { mp3: 5, cd: 6, hires: 7, hiresmax: 27 };
-  const qobuzFormatId = qobuzFormatMap[settings.qobuz] || 27;
+  const s = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless', max: 'on' };
+  // Qobuz: mp3→5  cd→6  hires+max:off→7  hires+max:on→27
+  const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
+  let qobuzFormatId = qobuzBaseMap[s.qobuz] || 7;
+  if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
   const tidalQualityMap = { low: 'LOW', high: 'HIGH', lossless: 'LOSSLESS', hireslossless: 'HI_RES_LOSSLESS' };
-  const tidalQuality = tidalQualityMap[settings.tidal] || 'HI_RES_LOSSLESS';
+  const tidalQuality = tidalQualityMap[s.tidal] || 'HI_RES_LOSSLESS';
 
   try {
     if (id.startsWith('tidal:')) {
