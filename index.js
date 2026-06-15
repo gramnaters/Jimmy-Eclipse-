@@ -449,9 +449,13 @@ function landingPage(baseUrl) {
   .cta .button{display:inline-flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#000;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-decoration:none;padding:20px 36px;border-radius:14px;width:100%;max-width:320px;transition:transform .15s ease,box-shadow .15s ease;box-shadow:0 8px 32px -8px rgba(255,255,255,.18)}
   .cta .button:hover{transform:translateY(-1px);box-shadow:0 14px 44px -8px rgba(255,255,255,.28)}
   .cta .button:active{transform:translateY(0)}
-  .cta .button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:10px;background:transparent;color:#888;font-weight:800;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;text-decoration:none;padding:16px 24px;border-radius:14px;width:100%;max-width:320px;border:1px solid #1f1f1f;margin-top:12px;transition:all .15s ease}
-  .cta .button-secondary:hover{color:#fff;border-color:#444}
   .cta p{font-size:14px;color:#888;margin-top:24px;line-height:1.6;max-width:380px;margin-left:auto;margin-right:auto}
+  .url-box{display:flex;gap:0;max-width:420px;width:100%;margin:0 auto;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden;background:#0a0a0a}
+  .url-box input{flex:1;background:transparent;border:none;color:#ccc;font-size:13px;padding:14px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;outline:none;min-width:0}
+  .url-box input::selection{background:rgba(255,80,80,.3)}
+  .url-box button{background:#fff;color:#000;border:none;font-weight:800;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 20px;cursor:pointer;white-space:nowrap;transition:opacity .15s ease}
+  .url-box button:hover{opacity:.85}
+  .url-box button.copied{background:#1a1a1a;color:#4f4}
   footer{padding:32px 24px 24px;text-align:center;color:#444;font-size:12px;letter-spacing:.3px;border-top:1px solid #0e0e0e}
   footer a{color:#777;text-decoration:none}
   footer a:hover{color:#fff}
@@ -494,9 +498,11 @@ function landingPage(baseUrl) {
   </section>
 
   <section class="cta">
-    <a class="button" href="eclipsemusic://addon?url=${encodeURIComponent(addonUrl)}">Add to Eclipse</a>
-    <a class="button-secondary" href="eightspine://source?url=${encodeURIComponent(baseUrl + '/index.json')}">Add to 8SPINE</a>
-    <p>Tap the button to add JIMMY to your Eclipse app. If the button doesn't open Eclipse, copy this URL into Eclipse Settings &rarr; Connections &rarr; Add Connection &rarr; Addon:<br><code style="font-size:11px;word-break:break-all;color:#aaa">${addonUrl}</code></p>
+    <div class="url-box">
+      <input type="text" value="${addonUrl}" readonly id="manifestUrl" onclick="this.select()">
+      <button onclick="copyUrl()" id="copyBtn">Copy</button>
+    </div>
+    <p>Copy the manifest URL above and paste it into Eclipse &rarr; Settings &rarr; Connections &rarr; Add Connection &rarr; Addon.</p>
   </section>
 </main>
 
@@ -510,6 +516,17 @@ function landingPage(baseUrl) {
   </div>
   <p class="disclaimer">Not affiliated with 8SPINE, Eclipse, or their creators.</p>
 </footer>
+<script>
+function copyUrl() {
+  const input = document.getElementById('manifestUrl');
+  const btn = document.getElementById('copyBtn');
+  input.select();
+  document.execCommand('copy');
+  btn.textContent = 'Copied!';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+}
+</script>
 </body>
 </html>`;
 }
