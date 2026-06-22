@@ -9,8 +9,8 @@ app.use(cors());
 app.use(express.json());
 
 // Settings URL rewriter
-//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  â†’ full quality config
-//   /cfg/{preset}/manifest.json                â†’ legacy preset
+//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  → full quality config
+//   /cfg/{preset}/manifest.json                → legacy preset
 app.use((req, res, next) => {
   let m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)-(on|off)(\/.*)$/);
   if (m) {
@@ -95,8 +95,8 @@ const QOBUZ = {
   base: 'https://www.qobuz.com/api.json/0.2'
 };
 
-const TIDAL_SEARCH = 'https://lateralus-edge-cache.hatestar.workers.dev';
-const BACKEND_CACHE_BASE = 'https://lateralus-edge-cache.hatestar.workers.dev';
+const TIDAL_SEARCH = 'https://monochrome-api.samidy.com';
+const BACKEND_CACHE_BASE = 'https://lateralus-backend.onrender.com';
 const BACKEND_CACHE_TOKEN = '230366616b3c69b13f3e11d07e633be855a36a4e9c9ec971152f50516dbee2ae';
 
 const REQUEST_TIMEOUT_MS = 12000;
@@ -144,9 +144,6 @@ function withTimeout(promise, ms) {
 
 function fetchJSON(url, opts, timeoutMs) {
   opts = opts || {};
-  if (url.startsWith(BACKEND_CACHE_BASE) || url.startsWith(TIDAL_SEARCH)) {
-    opts.headers = Object.assign({}, opts.headers || {}, { 'X-Cache-Token': BACKEND_CACHE_TOKEN });
-  }
   return withTimeout(
     fetch(url, opts).then(r => {
       if (!r.ok) throw new Error(`HTTP ${r.status} @ ${url}`);
@@ -354,7 +351,7 @@ async function tidalSearchAlbums(query, limit) {
     const url = TIDAL_SEARCH + '/search/?s=' + encodeURIComponent(query) +
       '&limit=' + (limit || 25) + '&type=albums';
     const data = await fetchJSON(url);
-    const items = (data && (data.albums || [])) || [];
+    const items = (data && data.data && (data.data.albums || data.data.items)) || [];
     return items.map(tidalMapAlbum).filter(Boolean);
   } catch { return []; }
 }
@@ -372,7 +369,7 @@ async function tidalSearchArtists(query, limit) {
     const url = TIDAL_SEARCH + '/search/?s=' + encodeURIComponent(query) +
       '&limit=' + (limit || 25) + '&type=artists';
     const data = await fetchJSON(url);
-    const items = (data && (data.artists || [])) || [];
+    const items = (data && data.data && (data.data.artists || data.data.items)) || [];
     return items.map(tidalMapArtist).filter(Boolean);
   } catch { return []; }
 }
@@ -451,9 +448,9 @@ function landingPage(baseUrl) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JIMMY â€” Hear the piracy.</title>
-<meta name="description" content="JIMMY â€” Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
-<meta property="og:title" content="JIMMY x Eclipse â€” Hear the piracy.">
+<title>JIMMY x Eclipse — Hear the piracy.</title>
+<meta name="description" content="JIMMY — Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
+<meta property="og:title" content="JIMMY x Eclipse — Hear the piracy.">
 <meta property="og:description" content="Hi-fi hybrid pulling Qobuz + Tidal back-to-back. Lossless, Hi-Res, Dolby Atmos streaming for Eclipse Music.">
 <meta property="og:image" content="https://jimmy-iota.vercel.app/icon.png">
 <style>
@@ -537,7 +534,7 @@ function landingPage(baseUrl) {
   <section class="card">
     <img src="https://jimmy-iota.vercel.app/icon.png" class="icon" alt="JIMMY">
     <h1>JIMMY<sup>&reg;</sup></h1>
-    <div class="meta"><b>v${currentVersion}</b><i>Â·</i>by Lateralus</div>
+    <div class="meta"><b>v${currentVersion}</b><i>·</i>by Lateralus</div>
     <p class="slogan">Hear the piracy.</p>
     <p class="desc">Jimmy's a high fidelity hybrid music module, which uses both Qobuz &amp; Tidal altogether. Main philosophy of jimmy is Quality audio rather than GSD ASAP. jimmy has Apple music metadata built-in &amp; is compatible with Eclipse, delivering every track flawlessly. Jimmy is what Quality convenience every user should experience, enjoy ;)</p>
     <div class="tags">
@@ -662,12 +659,19 @@ app.get('/', (req, res) => {
 // 1. Manifest
 app.get('/manifest.json', (req, res) => {
   const s = req.jimmySettings;
+  const qobuzLabels = { mp3: 'MP3', cd: 'CD FLAC', hires: 'Hi-Res 24/96' };
+  const tidalLabels = { low: 'Low', high: 'High', lossless: 'Lossless', hireslossless: 'Hi-Res Lossless' };
   let name = 'JIMMY';
+  if (s) {
+    name = 'JIMMY (Qobuz ' + (qobuzLabels[s.qobuz] || s.qobuz) +
+      (s.qobuz === 'hires' && s.max === 'on' ? ' + Max 24/192' : '') +
+      ' + Tidal ' + (tidalLabels[s.tidal] || s.tidal) + ')';
+  }
   res.json({
     id: 'com.lateralus.jimmy',
     name: name,
     version: currentVersion,
-    description: 'Just an Incredible Music Module, Yup! â€” Qobuz + Tidal high-res streaming for Eclipse',
+    description: 'Just an Incredible Music Module, Yup! — Qobuz + Tidal high-res streaming for Eclipse',
     icon: 'https://jimmy-iota.vercel.app/icon.png',
     resources: ['search', 'stream', 'catalog'],
     types: ['track', 'album', 'artist'],
@@ -707,70 +711,10 @@ app.get('/search', async (req, res) => {
 });
 
 // 3. Stream resolution
-
-// Audio proxy â€” handles HEAD + GET with proper Range/Content-Length headers
-// Eclipse's player does HEAD requests which the backend doesn't support (405)
-// This proxy intercepts HEAD and returns proper headers
-app.all('/proxy', async (req, res) => {
-  const targetUrl = req.query.url;
-  if (!targetUrl) return res.status(400).json({ error: 'Missing url param' });
-  
-  try {
-    if (req.method === 'HEAD') {
-      // Do a GET with Range 0-0 to get headers without downloading the file
-      const upstream = await fetch(targetUrl, {
-        method: 'GET',
-        headers: { 'Range': 'bytes=0-0' }
-      });
-      const contentRange = upstream.headers.get('content-range');
-      const totalSize = contentRange ? parseInt(contentRange.split('/')[1]) : 0;
-      res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/flac');
-      res.setHeader('Content-Length', totalSize);
-      res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('Content-Range', `bytes 0-${totalSize - 1}/${totalSize}`);
-      // Consume the body to free the connection
-      await upstream.text();
-      return res.status(200).end();
-    }
-    
-    // GET request â€” proxy with Range support
-    const headers = {};
-    if (req.headers.range) headers['Range'] = req.headers.range;
-    
-    const upstream = await fetch(targetUrl, { headers });
-    
-    // Copy headers
-    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/flac');
-    if (upstream.headers.get('content-length')) {
-      res.setHeader('Content-Length', upstream.headers.get('content-length'));
-    }
-    if (upstream.headers.get('content-range')) {
-      res.setHeader('Content-Range', upstream.headers.get('content-range'));
-    }
-    if (upstream.headers.get('accept-ranges')) {
-      res.setHeader('Accept-Ranges', upstream.headers.get('accept-ranges'));
-    }
-    
-    res.status(upstream.status);
-    
-    // Stream the body
-    const reader = upstream.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(Buffer.from(value));
-    }
-    res.end();
-  } catch (err) {
-    console.error('Proxy error:', err);
-    res.status(502).json({ error: 'Proxy failed' });
-  }
-});
-
 app.get('/stream/:id', async (req, res) => {
   const id = req.params.id;
   const s = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless', max: 'on' };
-  // Qobuz: mp3â†’5  cdâ†’6  hires+max:offâ†’7  hires+max:onâ†’27
+  // Qobuz: mp3→5  cd→6  hires+max:off→7  hires+max:on→27
   const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
   let qobuzFormatId = qobuzBaseMap[s.qobuz] || 7;
   if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
@@ -780,17 +724,15 @@ app.get('/stream/:id', async (req, res) => {
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
-        '&quality=' + tidalQuality;
+      const url = BACKEND_CACHE_BASE + '/track/' + encodeURIComponent(rawId) +
+        '?quality=' + tidalQuality;
       const data = await withTimeout(
         fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
         REQUEST_TIMEOUT_MS
       ).then(r => r.json());
 
-      const directUrl = data.streamUrl || data.url;
-      const proxyUrl = req.protocol + '://' + req.get('host') + '/proxy?url=' + encodeURIComponent(directUrl);
       res.json({
-        url: proxyUrl,
+        url: data.streamUrl || data.url,
         format: tidalQuality === 'HI_RES_LOSSLESS' || tidalQuality === 'LOSSLESS' ? 'flac' : 'aac',
         quality: data.audioQuality || tidalQuality,
         expiresAt: Math.floor(Date.now() / 1000) + 600
