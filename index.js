@@ -738,49 +738,143 @@ app.get('/stream/:id', async (req, res) => {
   const tidalQuality = tidalQualityMap[s.tidal] || 'HI_RES_LOSSLESS';
 
   try {
-    if (id.startsWith('tidal:')) {
-      const rawId = id.split(':')[1];
-      const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
-        '&quality=' + tidalQuality + '&spatial=0';
-      const data = await withTimeout(
-        fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
-        REQUEST_TIMEOUT_MS
-      ).then(r => r.json());
+    // Build a same-origin /audio/:id URL. Eclipse plays this; our /audio handler
+    // synthesizes HEAD (fly.dev returns 405 on HEAD â†’ Eclipse skips) and pipes
+    // GET+Range bytes straight through. No cache, no transformation.
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.get('host');
+    const audioUrl = proto + '://' + host + '/audio/' + encodeURIComponent(id);
 
-      res.json({
-        url: data.streamUrl || data.url,
-        format: tidalQuality === 'HI_RES_LOSSLESS' || tidalQuality === 'LOSSLESS' ? 'flac' : 'aac',
-        quality: data.audioQuality || tidalQuality,
-        expiresAt: Math.floor(Date.now() / 1000) + 600
-      });
+    let format = 'flac';
+    let quality = tidalQuality;
+    if (id.startsWith('tidal:')) {
+      format = (tidalQuality === 'HI_RES_LOSSLESS' || tidalQuality === 'LOSSLESS') ? 'flac' : 'aac';
     } else if (id.startsWith('qobuz:')) {
+      // For Qobuz we still need to resolve to check if it's a preview.
       const rawId = id.split(':')[1];
-      const formatId = qobuzFormatId;
       const ts = Math.floor(Date.now() / 1000);
-      const sig = md5('trackgetFileUrl' + 'format_id' + formatId + 'intentstream' +
+      const sig = md5('trackgetFileUrl' + 'format_id' + qobuzFormatId + 'intentstream' +
         'track_id' + rawId + ts + QOBUZ.secret);
       const url = QOBUZ.base + '/track/getFileUrl?app_id=' + QOBUZ.appId +
         '&user_auth_token=' + QOBUZ.userToken +
-        '&track_id=' + rawId + '&format_id=' + formatId +
+        '&track_id=' + rawId + '&format_id=' + qobuzFormatId +
         '&intent=stream&request_ts=' + ts + '&request_sig=' + sig;
       const data = await fetchJSON(url);
-
       if (data.sample === true) {
         return res.status(403).json({ error: 'Preview only - subscription required' });
       }
-
-      res.json({
-        url: data.url,
-        format: 'flac',
-        quality: qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, 'flac', []),
-        expiresAt: Math.floor(Date.now() / 1000) + 900
-      });
-    } else {
-      res.status(400).json({ error: 'Unknown provider' });
+      quality = qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, 'flac', []);
     }
+
+    res.json({
+      url: audioUrl,
+      format: format,
+      quality: quality,
+      expiresAt: Math.floor(Date.now() / 1000) + 600
+    });
   } catch (err) {
     console.error('Stream error:', err);
     res.status(500).json({ error: 'Stream resolution failed' });
+  }
+});
+
+// 3b. /audio/:id â€” transparent byte proxy with HEAD synthesis.
+//     fly.dev returns 405 on HEAD which makes Eclipse skip tracks.
+//     We synthesize HEAD from a 1-byte Range GET and pipe GET bytes through.
+async function resolveStreamUrl(id, tidalQuality) {
+  if (id.startsWith('tidal:')) {
+    const rawId = id.split(':')[1];
+    const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
+      '&quality=' + tidalQuality + '&spatial=0';
+    const data = await withTimeout(
+      fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
+      REQUEST_TIMEOUT_MS
+    ).then(r => r.json());
+    const upstream = data.streamUrl || data.url;
+    if (!upstream) throw new Error('No streamUrl from Worker');
+    return upstream;
+  }
+  if (id.startsWith('qobuz:')) {
+    const rawId = id.split(':')[1];
+    const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
+    let qobuzFormatId = 7;
+    const s = { qobuz: 'hires', max: 'on' };
+    if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = md5('trackgetFileUrl' + 'format_id' + qobuzFormatId + 'intentstream' +
+      'track_id' + rawId + ts + QOBUZ.secret);
+    const url = QOBUZ.base + '/track/getFileUrl?app_id=' + QOBUZ.appId +
+      '&user_auth_token=' + QOBUZ.userToken +
+      '&track_id=' + rawId + '&format_id=' + qobuzFormatId +
+      '&intent=stream&request_ts=' + ts + '&request_sig=' + sig;
+    const data = await fetchJSON(url);
+    if (data.sample === true) throw new Error('Preview only - subscription required');
+    return data.url;
+  }
+  throw new Error('Unknown provider');
+}
+
+app.all('/audio/:id', async (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+
+  const id = decodeURIComponent(req.params.id);
+  const s = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless', max: 'on' };
+  const tidalQualityMap = { low: 'LOW', high: 'HIGH', lossless: 'LOSSLESS', hireslossless: 'HI_RES_LOSSLESS' };
+  const tidalQuality = tidalQualityMap[s.tidal] || 'HI_RES_LOSSLESS';
+
+  let upstreamUrl;
+  try {
+    upstreamUrl = await resolveStreamUrl(id, tidalQuality);
+  } catch (err) {
+    if (req.method === 'HEAD') return res.status(502).end();
+    return res.status(502).json({ error: 'Upstream resolve failed: ' + err.message });
+  }
+
+  // HEAD: synthesize from 1-byte Range GET (fly.dev returns 405 on real HEAD)
+  if (req.method === 'HEAD') {
+    try {
+      const probe = await fetch(upstreamUrl, { headers: { Range: 'bytes=0-0' } });
+      if (!probe.ok && probe.status !== 206) {
+        return res.status(502).end();
+      }
+      res.status(200);
+      res.set('Content-Type', probe.headers.get('content-type') || 'audio/flac');
+      res.set('Accept-Ranges', 'bytes');
+      res.set('Cache-Control', 'no-store');
+      const cr = probe.headers.get('content-range');
+      if (cr) {
+        const m = cr.match(/bytes \d+-\d+\/(\d+)/);
+        if (m) res.set('Content-Length', m[1]);
+      }
+      return res.end();
+    } catch (err) {
+      return res.status(502).end();
+    }
+  }
+
+  // GET: forward Range, pipe bytes straight through â€” no transformation
+  const range = req.headers['range'];
+  const reqHeaders = {};
+  if (range) reqHeaders['Range'] = range;
+
+  try {
+    const upstreamRes = await fetch(upstreamUrl, { headers: reqHeaders, redirect: 'follow' });
+    if (!upstreamRes.ok && upstreamRes.status !== 206) {
+      const errBody = await upstreamRes.text().catch(() => '');
+      return res.status(502).json({ error: 'Upstream audio ' + upstreamRes.status, detail: errBody.slice(0, 200) });
+    }
+    res.status(upstreamRes.status);
+    res.set('Content-Type', upstreamRes.headers.get('content-type') || 'audio/flac');
+    res.set('Accept-Ranges', upstreamRes.headers.get('accept-ranges') || 'bytes');
+    res.set('Cache-Control', 'no-store');
+    const cr = upstreamRes.headers.get('content-range');
+    const cl = upstreamRes.headers.get('content-length');
+    if (cr) res.set('Content-Range', cr);
+    if (cl) res.set('Content-Length', cl);
+    const { Readable } = require('stream');
+    Readable.fromWeb(upstreamRes.body).pipe(res);
+  } catch (err) {
+    if (!res.headersSent) res.status(502).json({ error: 'Audio fetch failed' });
   }
 });
 
@@ -989,4 +1083,4 @@ if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`JIMMY Eclipse addon running on http://0.0.0.0:${PORT}`);
   });
-              }
+      }
