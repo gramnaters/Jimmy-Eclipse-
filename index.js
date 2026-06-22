@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 
-// Use native fetch (Node 18+) â€” node-fetch v2 has HTTP/2 keep-alive issues
+// Use native fetch (Node 18+) — node-fetch v2 has HTTP/2 keep-alive issues
 // causing "Premature close" on Vercel/Render. Fall back only if native missing.
 const fetch = (typeof globalThis.fetch === 'function')
   ? globalThis.fetch
@@ -14,8 +14,8 @@ app.use(cors());
 app.use(express.json());
 
 // Settings URL rewriter
-//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  â†’ full quality config
-//   /cfg/{preset}/manifest.json                â†’ legacy preset
+//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  → full quality config
+//   /cfg/{preset}/manifest.json                → legacy preset
 app.use((req, res, next) => {
   let m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)-(on|off)(\/.*)$/);
   if (m) {
@@ -44,52 +44,14 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Auto-update version from official JIMMY source ---
+// --- Eclipse addon version ---
+// This is the Eclipse addon version, independent of the 8SPINE module version.
+// Do NOT auto-sync from jimmy-iota.vercel.app — that project uses a different
+// versioning scheme (8SPINE module, currently ~1.6.x) and overwriting this
+// would regress the Eclipse manifest version on every cold start.
 
-const SOURCE_INDEX_URL = 'https://jimmy-iota.vercel.app/index.json';
-const SOURCE_MANIFEST_URL = 'https://jimmy-iota.vercel.app/manifest.json';
-const UPDATE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-const FALLBACK_VERSION = '2.0.0';
-
-let currentVersion = FALLBACK_VERSION;
-let currentCodeVersion = 200;
-
-async function fetchSourceVersion() {
-  try {
-    const res = await withTimeout(fetch(SOURCE_INDEX_URL), 10000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data && data['category:modules']) {
-      const jimmy = data['category:modules'].find(m => m.id === 'jimmy');
-      if (jimmy && jimmy.version) {
-        currentVersion = jimmy.version;
-        currentCodeVersion = jimmy.code || 200;
-        console.log(`[JIMMY] Version synced from source: v${currentVersion} (code ${currentCodeVersion})`);
-        return;
-      }
-    }
-  } catch (e) {
-    console.warn('[JIMMY] index.json fetch failed, trying manifest.json:', e.message);
-  }
-  try {
-    const res = await withTimeout(fetch(SOURCE_MANIFEST_URL), 10000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data && data.version) {
-      currentVersion = data.version;
-      console.log(`[JIMMY] Version synced from manifest: v${currentVersion}`);
-      return;
-    }
-  } catch (e) {
-    console.warn('[JIMMY] manifest.json fetch failed, using fallback:', e.message);
-  }
-  console.log(`[JIMMY] Using fallback version: v${currentVersion}`);
-}
-
-function startAutoUpdate() {
-  fetchSourceVersion();
-  setInterval(fetchSourceVersion, UPDATE_INTERVAL_MS);
-}
+const ECLIPSE_VERSION = '2.4.21';
+const currentVersion = ECLIPSE_VERSION;
 
 // --- Config (from JIMMY v1.6.16) ---
 
@@ -464,9 +426,9 @@ function landingPage(baseUrl) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JIMMY x Eclipse â€” Hear the piracy.</title>
-<meta name="description" content="JIMMY â€” Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
-<meta property="og:title" content="JIMMY x Eclipse â€” Hear the piracy.">
+<title>JIMMY x Eclipse — Hear the piracy.</title>
+<meta name="description" content="JIMMY — Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
+<meta property="og:title" content="JIMMY x Eclipse — Hear the piracy.">
 <meta property="og:description" content="Hi-fi hybrid pulling Qobuz + Tidal back-to-back. Lossless, Hi-Res, Dolby Atmos streaming for Eclipse Music.">
 <meta property="og:image" content="https://jimmy-iota.vercel.app/icon.png">
 <style>
@@ -550,7 +512,7 @@ function landingPage(baseUrl) {
   <section class="card">
     <img src="https://jimmy-iota.vercel.app/icon.png" class="icon" alt="JIMMY">
     <h1>JIMMY<sup>&reg;</sup></h1>
-    <div class="meta"><b>v${currentVersion}</b><i>Â·</i>by Lateralus</div>
+    <div class="meta"><b>v${currentVersion}</b><i>·</i>by Lateralus</div>
     <p class="slogan">Hear the piracy.</p>
     <p class="desc">Jimmy's a high fidelity hybrid music module, which uses both Qobuz &amp; Tidal altogether. Main philosophy of jimmy is Quality audio rather than GSD ASAP. jimmy has Apple music metadata built-in &amp; is compatible with Eclipse, delivering every track flawlessly. Jimmy is what Quality convenience every user should experience, enjoy ;)</p>
     <div class="tags">
@@ -687,7 +649,7 @@ app.get('/manifest.json', (req, res) => {
     id: 'com.lateralus.jimmy',
     name: name,
     version: currentVersion,
-    description: 'Just an Incredible Music Module, Yup! â€” Qobuz + Tidal high-res streaming for Eclipse',
+    description: 'Just an Incredible Music Module, Yup! — Qobuz + Tidal high-res streaming for Eclipse',
     icon: 'https://jimmy-iota.vercel.app/icon.png',
     resources: ['search', 'stream', 'catalog'],
     types: ['track', 'album', 'artist'],
@@ -730,7 +692,7 @@ app.get('/search', async (req, res) => {
 app.get('/stream/:id', async (req, res) => {
   const id = req.params.id;
   const s = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless', max: 'on' };
-  // Qobuz: mp3â†’5  cdâ†’6  hires+max:offâ†’7  hires+max:onâ†’27
+  // Qobuz: mp3→5  cd→6  hires+max:off→7  hires+max:on→27
   const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
   let qobuzFormatId = qobuzBaseMap[s.qobuz] || 7;
   if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
@@ -739,7 +701,7 @@ app.get('/stream/:id', async (req, res) => {
 
   try {
     // Build a same-origin /audio/:id URL. Eclipse plays this; our /audio handler
-    // synthesizes HEAD (fly.dev returns 405 on HEAD â†’ Eclipse skips) and pipes
+    // synthesizes HEAD (fly.dev returns 405 on HEAD → Eclipse skips) and pipes
     // GET+Range bytes straight through. No cache, no transformation.
     const proto = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.get('host');
@@ -763,7 +725,11 @@ app.get('/stream/:id', async (req, res) => {
       if (data.sample === true) {
         return res.status(403).json({ error: 'Preview only - subscription required' });
       }
-      quality = qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, 'flac', []);
+      // Derive actual format from the format_id we requested, not just 'flac'.
+      // format_id 5 = MP3 320, 6 = CD FLAC, 7 = Hi-Res 24/96, 27 = Hi-Res Max 24/192
+      const qFmt = qobuzFormatId === 5 ? 'mp3' : 'flac';
+      format = qFmt;
+      quality = qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, qFmt, []);
     }
 
     res.json({
@@ -778,10 +744,10 @@ app.get('/stream/:id', async (req, res) => {
   }
 });
 
-// 3b. /audio/:id â€” transparent byte proxy with HEAD synthesis.
+// 3b. /audio/:id — transparent byte proxy with HEAD synthesis.
 //     fly.dev returns 405 on HEAD which makes Eclipse skip tracks.
 //     We synthesize HEAD from a 1-byte Range GET and pipe GET bytes through.
-async function resolveStreamUrl(id, tidalQuality) {
+async function resolveStreamUrl(id, tidalQuality, settings) {
   if (id.startsWith('tidal:')) {
     const rawId = id.split(':')[1];
     const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
@@ -796,9 +762,11 @@ async function resolveStreamUrl(id, tidalQuality) {
   }
   if (id.startsWith('qobuz:')) {
     const rawId = id.split(':')[1];
+    // Use the request settings so the user's chosen quality is honoured.
+    // mp3 -> 5, cd -> 6, hires -> 7, hires+max -> 27
+    const s = settings || { qobuz: 'hires', max: 'on' };
     const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
-    let qobuzFormatId = 7;
-    const s = { qobuz: 'hires', max: 'on' };
+    let qobuzFormatId = qobuzBaseMap[s.qobuz] || 7;
     if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
     const ts = Math.floor(Date.now() / 1000);
     const sig = md5('trackgetFileUrl' + 'format_id' + qobuzFormatId + 'intentstream' +
@@ -824,7 +792,7 @@ app.all('/audio/:id', async (req, res, next) => {
 
   let upstreamUrl;
   try {
-    upstreamUrl = await resolveStreamUrl(id, tidalQuality);
+    upstreamUrl = await resolveStreamUrl(id, tidalQuality, s);
   } catch (err) {
     if (req.method === 'HEAD') return res.status(502).end();
     return res.status(502).json({ error: 'Upstream resolve failed: ' + err.message });
@@ -852,7 +820,7 @@ app.all('/audio/:id', async (req, res, next) => {
     }
   }
 
-  // GET: forward Range, pipe bytes straight through â€” no transformation
+  // GET: forward Range, pipe bytes straight through — no transformation
   const range = req.headers['range'];
   const reqHeaders = {};
   if (range) reqHeaders['Range'] = range;
@@ -885,7 +853,7 @@ app.get('/album/:id', async (req, res) => {
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      // Use Worker (returns flat tracks[] array) â€” samidy returns no tracks.
+      // Use Worker (returns flat tracks[] array) — samidy returns no tracks.
       const url = BACKEND_CACHE_BASE + '/album/?id=' + rawId;
       const data = await withTimeout(
         fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
@@ -982,7 +950,7 @@ app.get('/artist/:id', async (req, res) => {
         : (data.albums && data.albums.items) || [];
       let albums = rawAlbums.map(tidalMapAlbum).filter(Boolean);
 
-      // Worker /artist/ returns no tracks/albums â€” fall back to search.
+      // Worker /artist/ returns no tracks/albums — fall back to search.
       if (topTracks.length === 0 && artist.name) {
         try {
           const tItems = await tidalSearch(artist.name, 20);
@@ -1073,8 +1041,6 @@ app.get('/index.json', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', module: 'jimmy', version: currentVersion });
 });
-
-startAutoUpdate();
 
 module.exports = app;
 
