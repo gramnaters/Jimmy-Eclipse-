@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 
-// Use native fetch (Node 18+) — node-fetch v2 has HTTP/2 keep-alive issues
+// Use native fetch (Node 18+) â€” node-fetch v2 has HTTP/2 keep-alive issues
 // causing "Premature close" on Vercel/Render. Fall back only if native missing.
 const fetch = (typeof globalThis.fetch === 'function')
   ? globalThis.fetch
@@ -14,8 +14,8 @@ app.use(cors());
 app.use(express.json());
 
 // Settings URL rewriter
-//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  → full quality config
-//   /cfg/{preset}/manifest.json                → legacy preset
+//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  â†’ full quality config
+//   /cfg/{preset}/manifest.json                â†’ legacy preset
 app.use((req, res, next) => {
   let m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)-(on|off)(\/.*)$/);
   if (m) {
@@ -46,7 +46,7 @@ app.use((req, res, next) => {
 
 // --- Eclipse addon version ---
 // This is the Eclipse addon version, independent of the 8SPINE module version.
-// Do NOT auto-sync from jimmy-iota.vercel.app — that project uses a different
+// Do NOT auto-sync from jimmy-iota.vercel.app â€” that project uses a different
 // versioning scheme (8SPINE module, currently ~1.6.x) and overwriting this
 // would regress the Eclipse manifest version on every cold start.
 
@@ -426,9 +426,9 @@ function landingPage(baseUrl) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JIMMY x Eclipse — Hear the piracy.</title>
-<meta name="description" content="JIMMY — Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
-<meta property="og:title" content="JIMMY x Eclipse — Hear the piracy.">
+<title>JIMMY x Eclipse â€” Hear the piracy.</title>
+<meta name="description" content="JIMMY â€” Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
+<meta property="og:title" content="JIMMY x Eclipse â€” Hear the piracy.">
 <meta property="og:description" content="Hi-fi hybrid pulling Qobuz + Tidal back-to-back. Lossless, Hi-Res, Dolby Atmos streaming for Eclipse Music.">
 <meta property="og:image" content="https://jimmy-iota.vercel.app/icon.png">
 <style>
@@ -512,7 +512,7 @@ function landingPage(baseUrl) {
   <section class="card">
     <img src="https://jimmy-iota.vercel.app/icon.png" class="icon" alt="JIMMY">
     <h1>JIMMY<sup>&reg;</sup></h1>
-    <div class="meta"><b>v${currentVersion}</b><i>·</i>by Lateralus</div>
+    <div class="meta"><b>v${currentVersion}</b><i>Â·</i>by Lateralus</div>
     <p class="slogan">Hear the piracy.</p>
     <p class="desc">Jimmy's a high fidelity hybrid music module, which uses both Qobuz &amp; Tidal altogether. Main philosophy of jimmy is Quality audio rather than GSD ASAP. jimmy has Apple music metadata built-in &amp; is compatible with Eclipse, delivering every track flawlessly. Jimmy is what Quality convenience every user should experience, enjoy ;)</p>
     <div class="tags">
@@ -649,7 +649,7 @@ app.get('/manifest.json', (req, res) => {
     id: 'com.lateralus.jimmy',
     name: name,
     version: currentVersion,
-    description: 'Just an Incredible Music Module, Yup! — Qobuz + Tidal high-res streaming for Eclipse',
+    description: 'Just an Incredible Music Module, Yup! â€” Qobuz + Tidal high-res streaming for Eclipse',
     icon: 'https://jimmy-iota.vercel.app/icon.png',
     resources: ['search', 'stream', 'catalog'],
     types: ['track', 'album', 'artist'],
@@ -688,11 +688,106 @@ app.get('/search', async (req, res) => {
   }
 });
 
-// 3. Stream resolution
+// 3. Stream resolution â€” MANIFEST MODE (direct Tidal CDN, 100x faster than fly.dev)
+//
+// The Worker /track/ response contains a `manifest` field (base64 DASH MPD) with
+// direct Tidal CDN URLs (sp-ad-cf.audio.tidal.com). These are ~100x faster than
+// the `streamUrl` field (lateralus-backend.fly.dev):
+//   - Tidal CDN HEAD: 57ms, GET 1KB: 51ms (CloudFront edge cache)
+//   - fly.dev HEAD: 405 (fail), GET 1KB: 6300ms (overloaded)
+//
+// We parse the manifest, extract init + segment URLs, expose /audio/:id which
+// streams them concatenated as one progressive MP4. HEAD returns instantly from
+// cache. GET streams relevant segments for the requested Range.
+//
+// Falls back to fly.dev streamUrl if manifest parsing fails.
+
+const _manifestCache = new Map();
+const MANIFEST_TTL = 8 * 60 * 1000; // 8 min (Tidal CDN URLs expire ~10 min)
+
+function parseManifest(manifestB64) {
+  try {
+    const xml = Buffer.from(manifestB64, 'base64').toString('utf-8').replace(/&amp;/g, '&');
+    const initMatch = xml.match(/initialization="([^"]+)"/);
+    const mediaMatch = xml.match(/media="([^"]+)"/);
+    if (!initMatch || !mediaMatch) return null;
+    const initUrl = initMatch[1];
+    const mediaTpl = mediaMatch[1];
+    const snMatch = xml.match(/startNumber="(\d+)"/);
+    const startNumber = snMatch ? parseInt(snMatch[1]) : 1;
+    const timeline = xml.match(/<SegmentTimeline>(.*?)<\/SegmentTimeline>/s);
+    if (!timeline) return null;
+    const sEntries = [...timeline[1].matchAll(/<S\s+([^/>]+)\/>/g)];
+    let totalSegs = 0;
+    for (const m of sEntries) {
+      const rMatch = m[1].match(/r="(\d+)"/);
+      totalSegs += 1 + (rMatch ? parseInt(rMatch[1]) : 0);
+    }
+    if (totalSegs === 0) return null;
+    const segUrls = [];
+    for (let i = 0; i < totalSegs; i++) {
+      segUrls.push(mediaTpl.replace('$Number$', String(startNumber + i)));
+    }
+    // The manifest wraps FLAC/AAC in fMP4 containers. The byte stream is
+    // fragmented MP4 (init segment starts with ftyp box), NOT raw FLAC.
+    // Content-Type must be audio/mp4 to match the actual bytes.
+    return { initUrl, segUrls, mime: 'audio/mp4', totalSegments: totalSegs };
+  } catch (e) { return null; }
+}
+
+async function probeAndCache(id, tidalQuality) {
+  const cacheKey = id + '|' + tidalQuality;
+  const cached = _manifestCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) return cached;
+
+  const rawId = id.split(':')[1];
+  const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
+    '&quality=' + tidalQuality + '&spatial=0';
+  const data = await withTimeout(
+    fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
+    REQUEST_TIMEOUT_MS
+  ).then(r => r.json());
+
+  const parsed = parseManifest(data.manifest);
+  if (!parsed) {
+    // Fallback: use fly.dev streamUrl
+    const entry = {
+      fallbackUrl: data.streamUrl || data.url,
+      mime: data.mimeType || 'audio/flac',
+      expires: Date.now() + MANIFEST_TTL
+    };
+    _manifestCache.set(cacheKey, entry);
+    return entry;
+  }
+
+  // HEAD all segment URLs in parallel to get sizes (~600ms for 60 segments)
+  const allUrls = [parsed.initUrl, ...parsed.segUrls];
+  const sizes = await Promise.all(allUrls.map(u =>
+    fetch(u, { method: 'HEAD' })
+      .then(r => parseInt(r.headers.get('content-length') || '0'))
+      .catch(() => 0)
+  ));
+
+  // Compute prefix sums for Range translation
+  const prefix = new Array(sizes.length + 1);
+  prefix[0] = 0;
+  for (let i = 0; i < sizes.length; i++) prefix[i + 1] = prefix[i] + sizes[i];
+  const total = prefix[prefix.length - 1];
+
+  const entry = {
+    initUrl: parsed.initUrl,
+    segUrls: parsed.segUrls,
+    sizes, prefix, total,
+    mime: parsed.mime,
+    expires: Date.now() + MANIFEST_TTL
+  };
+  _manifestCache.set(cacheKey, entry);
+  return entry;
+}
+
 app.get('/stream/:id', async (req, res) => {
   const id = req.params.id;
   const s = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless', max: 'on' };
-  // Qobuz: mp3→5  cd→6  hires+max:off→7  hires+max:on→27
   const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
   let qobuzFormatId = qobuzBaseMap[s.qobuz] || 7;
   if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
@@ -700,149 +795,158 @@ app.get('/stream/:id', async (req, res) => {
   const tidalQuality = tidalQualityMap[s.tidal] || 'HI_RES_LOSSLESS';
 
   try {
-    // Build a same-origin /audio/:id URL. Eclipse plays this; our /audio handler
-    // synthesizes HEAD (fly.dev returns 405 on HEAD → Eclipse skips) and pipes
-    // GET+Range bytes straight through. No cache, no transformation.
-    const proto = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.get('host');
-    const audioUrl = proto + '://' + host + '/audio/' + encodeURIComponent(id);
-
-    let format = 'flac';
-    let quality = tidalQuality;
     if (id.startsWith('tidal:')) {
-      format = (tidalQuality === 'HI_RES_LOSSLESS' || tidalQuality === 'LOSSLESS') ? 'flac' : 'aac';
+      // Pre-warm the manifest cache so /audio HEAD is instant
+      await probeAndCache(id, tidalQuality).catch(() => {});
+      const proto = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.get('host');
+      const audioUrl = proto + '://' + host + '/audio/' + encodeURIComponent(id);
+      res.json({
+        url: audioUrl,
+        format: (tidalQuality === 'HI_RES_LOSSLESS' || tidalQuality === 'LOSSLESS') ? 'flac' : 'aac',
+        quality: tidalQuality,
+        expiresAt: Math.floor(Date.now() / 1000) + 600
+      });
     } else if (id.startsWith('qobuz:')) {
-      // For Qobuz we still need to resolve to check if it's a preview.
       const rawId = id.split(':')[1];
       const ts = Math.floor(Date.now() / 1000);
       const sig = md5('trackgetFileUrl' + 'format_id' + qobuzFormatId + 'intentstream' +
         'track_id' + rawId + ts + QOBUZ.secret);
-      const url = QOBUZ.base + '/track/getFileUrl?app_id=' + QOBUZ.appId +
+      const qurl = QOBUZ.base + '/track/getFileUrl?app_id=' + QOBUZ.appId +
         '&user_auth_token=' + QOBUZ.userToken +
         '&track_id=' + rawId + '&format_id=' + qobuzFormatId +
         '&intent=stream&request_ts=' + ts + '&request_sig=' + sig;
-      const data = await fetchJSON(url);
+      const data = await fetchJSON(qurl);
       if (data.sample === true) {
         return res.status(403).json({ error: 'Preview only - subscription required' });
       }
-      // Derive actual format from the format_id we requested, not just 'flac'.
-      // format_id 5 = MP3 320, 6 = CD FLAC, 7 = Hi-Res 24/96, 27 = Hi-Res Max 24/192
       const qFmt = qobuzFormatId === 5 ? 'mp3' : 'flac';
-      format = qFmt;
-      quality = qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, qFmt, []);
+      res.json({
+        url: data.url,
+        format: qFmt,
+        quality: qualityLabel(data.bit_depth || 24, data.sampling_rate || data.sample_rate || 96, qFmt, []),
+        expiresAt: Math.floor(Date.now() / 1000) + 900
+      });
+    } else {
+      res.status(400).json({ error: 'Unknown provider' });
     }
-
-    res.json({
-      url: audioUrl,
-      format: format,
-      quality: quality,
-      expiresAt: Math.floor(Date.now() / 1000) + 600
-    });
   } catch (err) {
     console.error('Stream error:', err);
     res.status(500).json({ error: 'Stream resolution failed' });
   }
 });
 
-// 3b. /audio/:id — transparent byte proxy with HEAD synthesis.
-//     fly.dev returns 405 on HEAD which makes Eclipse skip tracks.
-//     We synthesize HEAD from a 1-byte Range GET and pipe GET bytes through.
-async function resolveStreamUrl(id, tidalQuality, settings) {
-  if (id.startsWith('tidal:')) {
-    const rawId = id.split(':')[1];
-    const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
-      '&quality=' + tidalQuality + '&spatial=0';
-    const data = await withTimeout(
-      fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
-      REQUEST_TIMEOUT_MS
-    ).then(r => r.json());
-    const upstream = data.streamUrl || data.url;
-    if (!upstream) throw new Error('No streamUrl from Worker');
-    return upstream;
-  }
-  if (id.startsWith('qobuz:')) {
-    const rawId = id.split(':')[1];
-    // Use the request settings so the user's chosen quality is honoured.
-    // mp3 -> 5, cd -> 6, hires -> 7, hires+max -> 27
-    const s = settings || { qobuz: 'hires', max: 'on' };
-    const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
-    let qobuzFormatId = qobuzBaseMap[s.qobuz] || 7;
-    if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
-    const ts = Math.floor(Date.now() / 1000);
-    const sig = md5('trackgetFileUrl' + 'format_id' + qobuzFormatId + 'intentstream' +
-      'track_id' + rawId + ts + QOBUZ.secret);
-    const url = QOBUZ.base + '/track/getFileUrl?app_id=' + QOBUZ.appId +
-      '&user_auth_token=' + QOBUZ.userToken +
-      '&track_id=' + rawId + '&format_id=' + qobuzFormatId +
-      '&intent=stream&request_ts=' + ts + '&request_sig=' + sig;
-    const data = await fetchJSON(url);
-    if (data.sample === true) throw new Error('Preview only - subscription required');
-    return data.url;
-  }
-  throw new Error('Unknown provider');
-}
-
+// 3b. /audio/:id â€” stream init + segments concatenated from Tidal CDN.
+//     HEAD: instant from cache. GET: stream relevant segments for Range.
+//     Falls back to fly.dev proxy if manifest parsing failed.
 app.all('/audio/:id', async (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-
   const id = decodeURIComponent(req.params.id);
   const s = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless', max: 'on' };
   const tidalQualityMap = { low: 'LOW', high: 'HIGH', lossless: 'LOSSLESS', hireslossless: 'HI_RES_LOSSLESS' };
   const tidalQuality = tidalQualityMap[s.tidal] || 'HI_RES_LOSSLESS';
 
-  let upstreamUrl;
-  try {
-    upstreamUrl = await resolveStreamUrl(id, tidalQuality, s);
-  } catch (err) {
+  let entry;
+  try { entry = await probeAndCache(id, tidalQuality); }
+  catch (err) {
     if (req.method === 'HEAD') return res.status(502).end();
-    return res.status(502).json({ error: 'Upstream resolve failed: ' + err.message });
+    return res.status(502).json({ error: 'Resolve failed' });
   }
 
-  // HEAD: synthesize from 1-byte Range GET (fly.dev returns 405 on real HEAD)
-  if (req.method === 'HEAD') {
+  // Fallback mode (fly.dev) â€” pipe through with HEAD synthesis
+  if (entry.fallbackUrl) {
+    if (req.method === 'HEAD') {
+      try {
+        const probe = await fetch(entry.fallbackUrl, { headers: { Range: 'bytes=0-0' } });
+        if (!probe.ok && probe.status !== 206) return res.status(502).end();
+        res.status(200);
+        res.set('Content-Type', probe.headers.get('content-type') || entry.mime);
+        res.set('Accept-Ranges', 'bytes');
+        const cr = probe.headers.get('content-range');
+        if (cr) { const m = cr.match(/bytes \d+-\d+\/(\d+)/); if (m) res.set('Content-Length', m[1]); }
+        return res.end();
+      } catch { return res.status(502).end(); }
+    }
+    const range = req.headers['range'];
+    const h = {}; if (range) h['Range'] = range;
     try {
-      const probe = await fetch(upstreamUrl, { headers: { Range: 'bytes=0-0' } });
-      if (!probe.ok && probe.status !== 206) {
-        return res.status(502).end();
-      }
-      res.status(200);
-      res.set('Content-Type', probe.headers.get('content-type') || 'audio/flac');
-      res.set('Accept-Ranges', 'bytes');
-      res.set('Cache-Control', 'no-store');
-      const cr = probe.headers.get('content-range');
-      if (cr) {
-        const m = cr.match(/bytes \d+-\d+\/(\d+)/);
-        if (m) res.set('Content-Length', m[1]);
-      }
-      return res.end();
-    } catch (err) {
-      return res.status(502).end();
-    }
+      const r = await fetch(entry.fallbackUrl, { headers: h, redirect: 'follow' });
+      if (!r.ok && r.status !== 206) return res.status(502).json({ error: 'Upstream ' + r.status });
+      res.status(r.status);
+      res.set('Content-Type', r.headers.get('content-type') || entry.mime);
+      res.set('Accept-Ranges', r.headers.get('accept-ranges') || 'bytes');
+      const cr = r.headers.get('content-range'); const cl = r.headers.get('content-length');
+      if (cr) res.set('Content-Range', cr); if (cl) res.set('Content-Length', cl);
+      const { Readable } = require('stream');
+      Readable.fromWeb(r.body).pipe(res);
+    } catch { if (!res.headersSent) res.status(502).end(); }
+    return;
   }
 
-  // GET: forward Range, pipe bytes straight through — no transformation
-  const range = req.headers['range'];
-  const reqHeaders = {};
-  if (range) reqHeaders['Range'] = range;
+  // Manifest mode â€” Tidal CDN direct (100x faster than fly.dev)
+  const total = entry.total;
+  if (req.method === 'HEAD') {
+    res.status(200);
+    res.set('Content-Type', entry.mime);
+    res.set('Content-Length', String(total));
+    res.set('Accept-Ranges', 'bytes');
+    return res.end();
+  }
 
+  // GET â€” parse Range header (default to full file)
+  const rangeHdr = req.headers['range'];
+  let start = 0, end = total - 1;
+  if (rangeHdr) {
+    const m = rangeHdr.match(/bytes=(\d+)-(\d*)/);
+    if (m) { start = parseInt(m[1]); end = m[2] ? parseInt(m[2]) : total - 1; }
+  }
+  if (start >= total) { res.status(416); res.set('Content-Range', `bytes */${total}`); return res.end(); }
+  if (end >= total) end = total - 1;
+  const length = end - start + 1;
+
+  res.status(206);
+  res.set('Content-Type', entry.mime);
+  res.set('Content-Length', String(length));
+  res.set('Content-Range', `bytes ${start}-${end}/${total}`);
+  res.set('Accept-Ranges', 'bytes');
+
+  // Stream relevant segments from Tidal CDN (each ~50ms)
   try {
-    const upstreamRes = await fetch(upstreamUrl, { headers: reqHeaders, redirect: 'follow' });
-    if (!upstreamRes.ok && upstreamRes.status !== 206) {
-      const errBody = await upstreamRes.text().catch(() => '');
-      return res.status(502).json({ error: 'Upstream audio ' + upstreamRes.status, detail: errBody.slice(0, 200) });
+    let remaining = length;
+    for (let i = 0; i < entry.sizes.length && remaining > 0; i++) {
+      const segStart = entry.prefix[i];
+      const segEnd = segStart + entry.sizes[i] - 1;
+      if (segEnd < start) continue;
+      if (segStart > end) break;
+
+      const segUrl = (i === 0) ? entry.initUrl : entry.segUrls[i - 1];
+      const skipFront = Math.max(0, start - segStart);
+      const readEnd = Math.min(entry.sizes[i] - 1, end - segStart);
+      const segHeaders = {};
+      if (skipFront > 0 || readEnd < entry.sizes[i] - 1) {
+        segHeaders['Range'] = `bytes=${skipFront}-${readEnd}`;
+      }
+
+      await new Promise((resolve, reject) => {
+        const segReq = require('https').get(segUrl, { headers: segHeaders }, (segRes) => {
+          if (segRes.statusCode !== 200 && segRes.statusCode !== 206) {
+            segRes.resume(); return reject(new Error(`Seg ${i} HTTP ${segRes.statusCode}`));
+          }
+          segRes.on('data', (chunk) => {
+            const toWrite = chunk.slice(0, Math.min(chunk.length, remaining));
+            if (toWrite.length > 0) { res.write(toWrite); remaining -= toWrite.length; }
+            if (remaining <= 0) { segRes.destroy(); resolve(); }
+          });
+          segRes.on('end', resolve);
+          segRes.on('error', reject);
+        });
+        segReq.on('error', reject);
+      });
     }
-    res.status(upstreamRes.status);
-    res.set('Content-Type', upstreamRes.headers.get('content-type') || 'audio/flac');
-    res.set('Accept-Ranges', upstreamRes.headers.get('accept-ranges') || 'bytes');
-    res.set('Cache-Control', 'no-store');
-    const cr = upstreamRes.headers.get('content-range');
-    const cl = upstreamRes.headers.get('content-length');
-    if (cr) res.set('Content-Range', cr);
-    if (cl) res.set('Content-Length', cl);
-    const { Readable } = require('stream');
-    Readable.fromWeb(upstreamRes.body).pipe(res);
+    res.end();
   } catch (err) {
-    if (!res.headersSent) res.status(502).json({ error: 'Audio fetch failed' });
+    if (!res.headersSent) res.status(502).end();
+    else res.end();
   }
 });
 
@@ -853,7 +957,7 @@ app.get('/album/:id', async (req, res) => {
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      // Use Worker (returns flat tracks[] array) — samidy returns no tracks.
+      // Use Worker (returns flat tracks[] array) â€” samidy returns no tracks.
       const url = BACKEND_CACHE_BASE + '/album/?id=' + rawId;
       const data = await withTimeout(
         fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
@@ -950,7 +1054,7 @@ app.get('/artist/:id', async (req, res) => {
         : (data.albums && data.albums.items) || [];
       let albums = rawAlbums.map(tidalMapAlbum).filter(Boolean);
 
-      // Worker /artist/ returns no tracks/albums — fall back to search.
+      // Worker /artist/ returns no tracks/albums â€” fall back to search.
       if (topTracks.length === 0 && artist.name) {
         try {
           const tItems = await tidalSearch(artist.name, 20);
