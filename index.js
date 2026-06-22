@@ -96,7 +96,7 @@ const QOBUZ = {
 };
 
 const TIDAL_SEARCH = 'https://monochrome-api.samidy.com';
-const BACKEND_CACHE_BASE = 'https://lateralus-backend.onrender.com';
+const BACKEND_CACHE_BASE = 'https://lateralus-edge-cache.hatestar.workers.dev';
 const BACKEND_CACHE_TOKEN = '230366616b3c69b13f3e11d07e633be855a36a4e9c9ec971152f50516dbee2ae';
 
 const REQUEST_TIMEOUT_MS = 12000;
@@ -724,8 +724,8 @@ app.get('/stream/:id', async (req, res) => {
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      const url = BACKEND_CACHE_BASE + '/track/' + encodeURIComponent(rawId) +
-        '?quality=' + tidalQuality;
+      const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
+        '&quality=' + tidalQuality;
       const data = await withTimeout(
         fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
         REQUEST_TIMEOUT_MS
