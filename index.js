@@ -1,7 +1,12 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
 const crypto = require('crypto');
+
+// Use native fetch (Node 18+) â€” node-fetch v2 has HTTP/2 keep-alive issues
+// causing "Premature close" on Vercel/Render. Fall back only if native missing.
+const fetch = (typeof globalThis.fetch === 'function')
+  ? globalThis.fetch
+  : require('node-fetch');
 
 const app = express();
 
@@ -9,8 +14,8 @@ app.use(cors());
 app.use(express.json());
 
 // Settings URL rewriter
-//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  → full quality config
-//   /cfg/{preset}/manifest.json                → legacy preset
+//   /cfg/{qobuz}-{tidal}-{max}/manifest.json  â†’ full quality config
+//   /cfg/{preset}/manifest.json                â†’ legacy preset
 app.use((req, res, next) => {
   let m = req.url.match(/^\/cfg\/([a-z0-9]+)-([a-z]+)-(on|off)(\/.*)$/);
   if (m) {
@@ -96,7 +101,7 @@ const QOBUZ = {
 };
 
 const TIDAL_SEARCH = 'https://monochrome-api.samidy.com';
-const BACKEND_CACHE_BASE = 'https://lateralus-backend.onrender.com';
+const BACKEND_CACHE_BASE = 'https://lateralus-edge-cache.hatestar.workers.dev';
 const BACKEND_CACHE_TOKEN = '230366616b3c69b13f3e11d07e633be855a36a4e9c9ec971152f50516dbee2ae';
 
 const REQUEST_TIMEOUT_MS = 12000;
@@ -231,7 +236,8 @@ function tidalMapAlbum(a) {
   return {
     id: 'tidal:' + a.id,
     title: a.title || 'Unknown',
-    artist: (a.artist && a.artist.name) || 'Unknown Artist',
+    artist: (a.artists && a.artists[0] && a.artists[0].name) ||
+      (a.artist && a.artist.name) || 'Unknown Artist',
     artworkURL: tidalCoverUrl(a.cover),
     year: a.releaseDate ? a.releaseDate.substring(0, 4) : null,
     trackCount: a.numberOfTracks || 0,
@@ -348,10 +354,15 @@ async function qobuzSearchAlbums(query, limit) {
 
 async function tidalSearchAlbums(query, limit) {
   try {
-    const url = TIDAL_SEARCH + '/search/?s=' + encodeURIComponent(query) +
+    const url = BACKEND_CACHE_BASE + '/search/?query=' + encodeURIComponent(query) +
       '&limit=' + (limit || 25) + '&type=albums';
-    const data = await fetchJSON(url);
-    const items = (data && data.data && (data.data.albums || data.data.items)) || [];
+    const res = await withTimeout(
+      fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
+      REQUEST_TIMEOUT_MS
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = (data && data.albums) || [];
     return items.map(tidalMapAlbum).filter(Boolean);
   } catch { return []; }
 }
@@ -366,10 +377,15 @@ async function qobuzSearchArtists(query, limit) {
 
 async function tidalSearchArtists(query, limit) {
   try {
-    const url = TIDAL_SEARCH + '/search/?s=' + encodeURIComponent(query) +
+    const url = BACKEND_CACHE_BASE + '/search/?query=' + encodeURIComponent(query) +
       '&limit=' + (limit || 25) + '&type=artists';
-    const data = await fetchJSON(url);
-    const items = (data && data.data && (data.data.artists || data.data.items)) || [];
+    const res = await withTimeout(
+      fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
+      REQUEST_TIMEOUT_MS
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = (data && data.artists) || [];
     return items.map(tidalMapArtist).filter(Boolean);
   } catch { return []; }
 }
@@ -448,9 +464,9 @@ function landingPage(baseUrl) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JIMMY x Eclipse — Hear the piracy.</title>
-<meta name="description" content="JIMMY — Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
-<meta property="og:title" content="JIMMY x Eclipse — Hear the piracy.">
+<title>JIMMY x Eclipse â€” Hear the piracy.</title>
+<meta name="description" content="JIMMY â€” Hear the piracy. Hi-fidelity hybrid Eclipse addon pulling Qobuz + Tidal back-to-back. Lossless / Hi-Res / 192kHz / Dolby Atmos.">
+<meta property="og:title" content="JIMMY x Eclipse â€” Hear the piracy.">
 <meta property="og:description" content="Hi-fi hybrid pulling Qobuz + Tidal back-to-back. Lossless, Hi-Res, Dolby Atmos streaming for Eclipse Music.">
 <meta property="og:image" content="https://jimmy-iota.vercel.app/icon.png">
 <style>
@@ -534,7 +550,7 @@ function landingPage(baseUrl) {
   <section class="card">
     <img src="https://jimmy-iota.vercel.app/icon.png" class="icon" alt="JIMMY">
     <h1>JIMMY<sup>&reg;</sup></h1>
-    <div class="meta"><b>v${currentVersion}</b><i>·</i>by Lateralus</div>
+    <div class="meta"><b>v${currentVersion}</b><i>Â·</i>by Lateralus</div>
     <p class="slogan">Hear the piracy.</p>
     <p class="desc">Jimmy's a high fidelity hybrid music module, which uses both Qobuz &amp; Tidal altogether. Main philosophy of jimmy is Quality audio rather than GSD ASAP. jimmy has Apple music metadata built-in &amp; is compatible with Eclipse, delivering every track flawlessly. Jimmy is what Quality convenience every user should experience, enjoy ;)</p>
     <div class="tags">
@@ -671,7 +687,7 @@ app.get('/manifest.json', (req, res) => {
     id: 'com.lateralus.jimmy',
     name: name,
     version: currentVersion,
-    description: 'Just an Incredible Music Module, Yup! — Qobuz + Tidal high-res streaming for Eclipse',
+    description: 'Just an Incredible Music Module, Yup! â€” Qobuz + Tidal high-res streaming for Eclipse',
     icon: 'https://jimmy-iota.vercel.app/icon.png',
     resources: ['search', 'stream', 'catalog'],
     types: ['track', 'album', 'artist'],
@@ -714,7 +730,7 @@ app.get('/search', async (req, res) => {
 app.get('/stream/:id', async (req, res) => {
   const id = req.params.id;
   const s = req.jimmySettings || { qobuz: 'hires', tidal: 'hireslossless', max: 'on' };
-  // Qobuz: mp3→5  cd→6  hires+max:off→7  hires+max:on→27
+  // Qobuz: mp3â†’5  cdâ†’6  hires+max:offâ†’7  hires+max:onâ†’27
   const qobuzBaseMap = { mp3: 5, cd: 6, hires: 7 };
   let qobuzFormatId = qobuzBaseMap[s.qobuz] || 7;
   if (s.qobuz === 'hires' && s.max === 'on') qobuzFormatId = 27;
@@ -724,8 +740,8 @@ app.get('/stream/:id', async (req, res) => {
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      const url = BACKEND_CACHE_BASE + '/track/' + encodeURIComponent(rawId) +
-        '?quality=' + tidalQuality;
+      const url = BACKEND_CACHE_BASE + '/track/?id=' + encodeURIComponent(rawId) +
+        '&quality=' + tidalQuality + '&spatial=0';
       const data = await withTimeout(
         fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
         REQUEST_TIMEOUT_MS
@@ -775,14 +791,20 @@ app.get('/album/:id', async (req, res) => {
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      const url = TIDAL_SEARCH + '/album/?id=' + rawId;
-      const data = await fetchJSON(url);
+      // Use Worker (returns flat tracks[] array) â€” samidy returns no tracks.
+      const url = BACKEND_CACHE_BASE + '/album/?id=' + rawId;
+      const data = await withTimeout(
+        fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
+        REQUEST_TIMEOUT_MS
+      ).then(r => r.json());
       if (!data) return res.status(404).json({ error: 'Album not found' });
 
       const album = tidalMapAlbum(data);
       const cover = album.artworkURL;
-      const tracks = ((data.tracks && data.tracks.items) ||
-        (data.media && data.media[0] && data.media[0].tracks) || [])
+      const rawTracks = Array.isArray(data.tracks) ? data.tracks
+        : ((data.tracks && data.tracks.items) ||
+           (data.media && data.media[0] && data.media[0].tracks) || []);
+      const tracks = rawTracks
         .map(t => {
           const tt = tidalMapTrack(t);
           if (!tt) return null;
@@ -837,13 +859,19 @@ app.get('/artist/:id', async (req, res) => {
   try {
     if (id.startsWith('tidal:')) {
       const rawId = id.split(':')[1];
-      const url = TIDAL_SEARCH + '/artist/?id=' + rawId;
-      const data = await fetchJSON(url);
+      // Use Worker for artist metadata. Worker /artist/ returns minimal data
+      // (no tracks/albums), so we fall back to search enrichment.
+      const url = BACKEND_CACHE_BASE + '/artist/?id=' + rawId;
+      const data = await withTimeout(
+        fetch(url, { headers: { 'X-Cache-Token': BACKEND_CACHE_TOKEN } }),
+        REQUEST_TIMEOUT_MS
+      ).then(r => r.json());
       if (!data) return res.status(404).json({ error: 'Artist not found' });
 
       const artist = tidalMapArtist(data);
-      const topTracks = ((data.tracks && data.tracks.items) || [])
-        .map(t => {
+      const rawTracks = Array.isArray(data.tracks) ? data.tracks
+        : (data.tracks && data.tracks.items) || [];
+      let topTracks = rawTracks.map(t => {
           const tt = tidalMapTrack(t);
           if (!tt) return null;
           return {
@@ -856,8 +884,27 @@ app.get('/artist/:id', async (req, res) => {
             format: tt.format || 'flac'
           };
         }).filter(Boolean);
-      const albums = ((data.albums && data.albums.items) || [])
-        .map(tidalMapAlbum).filter(Boolean);
+      const rawAlbums = Array.isArray(data.albums) ? data.albums
+        : (data.albums && data.albums.items) || [];
+      let albums = rawAlbums.map(tidalMapAlbum).filter(Boolean);
+
+      // Worker /artist/ returns no tracks/albums â€” fall back to search.
+      if (topTracks.length === 0 && artist.name) {
+        try {
+          const tItems = await tidalSearch(artist.name, 20);
+          topTracks = tItems
+            .filter(t => t.artist && t.artist.toLowerCase() === artist.name.toLowerCase())
+            .slice(0, 15);
+        } catch {}
+      }
+      if (albums.length === 0 && artist.name) {
+        try {
+          const aItems = await tidalSearchAlbums(artist.name, 20);
+          albums = aItems
+            .filter(a => a.artist && a.artist.toLowerCase() === artist.name.toLowerCase())
+            .slice(0, 15);
+        } catch {}
+      }
 
       artist.topTracks = topTracks;
       artist.albums = albums;
@@ -942,4 +989,4 @@ if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`JIMMY Eclipse addon running on http://0.0.0.0:${PORT}`);
   });
-}
+              }
